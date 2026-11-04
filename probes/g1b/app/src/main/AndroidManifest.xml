@@ -17,9 +17,12 @@
     <uses-permission android:name="pleos.car.permission.CAR_POWERTRAIN" />
     <uses-permission android:name="pleos.car.permission.NAVI_ROUTE" />
     <uses-permission android:name="pleos.car.permission.NAVI_ROUTE_SEARCH" />
+    <!-- Pleos TextToSpeech SDK (공식 문서: 초기화·리스너·발화 모두 이 권한 필요) -->
+    <uses-permission android:name="pleos.car.permission.TTS_SERVICE" />
 
-    <!-- Android 11+ 패키지 가시성: TTS 엔진 찾기 -->
+    <!-- Android 11+ 패키지 가시성: Pleos 음성 서비스(CaaS) -->
     <queries>
+        <package android:name="ai.pleos.playground.caas" />
         <intent>
             <action android:name="android.intent.action.TTS_SERVICE" />
         </intent>
@@ -39,12 +42,12 @@
             </intent-filter>
         </activity>
 
-        <!-- 주행 중 상태 화면: DO 선언 (B1에서 실제로 받아들여지는지 확인) -->
+        <!-- 주행 중 상태 화면: DO 선언 (B1에서 실제로 받아들여지는지 확인 — v0.5: adb 설치는 불인정·가려짐) -->
         <activity android:name=".GlanceStatusActivity" android:exported="true">
             <meta-data android:name="distractionOptimized" android:value="true" />
         </activity>
 
-        <!-- 음성·차량 신호·경로를 맡는 포그라운드 서비스 (화면이 가려져도 동작하는지 B3에서 확인) -->
+        <!-- 음성·차량 신호·경로를 맡는 포그라운드 서비스 (화면이 가려져도 동작하는지 B3·B7에서 확인) -->
         <service
             android:name=".ProbeService"
             android:exported="true"

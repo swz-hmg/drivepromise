@@ -8,6 +8,13 @@ captures/
 *.iml
 .idea/
 # 비밀 정보 — 절대 커밋하지 않음
+*recovery-codes*
+*recovery_codes*
+*.pem
+*.p12
+*.key
+.env
+id_rsa*
 secrets.properties
 *.jks
 *.keystore

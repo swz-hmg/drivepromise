@@ -9,13 +9,13 @@ A Pleos Connect in-vehicle companion that helps older drivers keep the driving p
 
 | 경로 | 내용 |
 |---|---|
-| `probes/g1b/` | G1-B 프로브 앱 — 주행 중 화면 차단(DO)·음성(TTS)·차량 신호·경로 API를 에뮬레이터에서 확인 |
+| `probes/g1b/` | G1-B 프로브 앱 — 주행 중 화면 차단(DO)·음성(Pleos TTS)·내비 안내와 겹침·차량 신호·경로 API를 에뮬레이터에서 확인 |
 | `app/` (예정) | DrivePromise 앱 |
 | `apk/` (제출 때) | 심사용 release APK |
 
 ## 빌드 (프로브)
 
-JDK 17, Android SDK 35, Pleos Playground Maven 저장소(토큰 불필요)를 씁니다.
+JDK 17, Android SDK 35, Pleos Playground Maven 저장소(토큰 불필요)를 씁니다. 음성은 Pleos TextToSpeech SDK(ON_DEVICE)로 냅니다.
 
 ```bash
 cd probes/g1b
@@ -26,6 +26,7 @@ cd probes/g1b
 
 - 주행 중에는 음성 중심, 화면은 정차·출발 전 (플랫폼이 허용하면 작은 상태 표시만)
 - 회전 앞뒤 ‘침묵 구간’에는 말하지 않음 — 안전 경고만 예외
+- 기본 내비 안내와 겹치면 운전약속이 물러섬 — 내비 소리를 줄이거나 끊지 않고, 끝난 뒤 짧게 말함
 - 판정·발화 로직은 화면과 분리된 포그라운드 서비스에서 동작
 
 ## 비밀 정보
