@@ -31,7 +31,7 @@ android {
 }
 
 dependencies {
-    implementation("ai.pleos.playground:Vehicle:2.3.1")
+    implementation("ai.pleos.playground:Vehicle:2.3.2")   // 2.3.1은 Maven에 없음(공식 샘플 README·1일차 실측은 2.3.2)
     implementation("ai.pleos.playground:NaviHelper:3.0.5")
     implementation("org.jetbrains.kotlin:kotlin-reflect:2.0.0")
 }
