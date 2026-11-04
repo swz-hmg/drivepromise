@@ -1,0 +1,19 @@
+# Android / Gradle
+.gradle/
+**/build/
+local.properties
+captures/
+.externalNativeBuild/
+.cxx/
+*.iml
+.idea/
+# 비밀 정보 — 절대 커밋하지 않음
+secrets.properties
+*.jks
+*.keystore
+google-services.json
+# OS
+.DS_Store
+._*
+# 시험 로그
+logs/
