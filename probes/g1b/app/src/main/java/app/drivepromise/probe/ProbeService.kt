@@ -42,15 +42,20 @@ import kotlin.reflect.full.declaredMemberFunctions
 /**
  * G1-B 포그라운드 서비스 — 화면과 무관하게 돌며 결과를 logcat(G1B)에 남김.
  * 명령: adb shell am start-foreground-service -n app.drivepromise.probe/.ProbeService --es cmd <명령>
- *   do_check · speak_asst · speak_nav(B3) · route_far(B6) · b7_df_asst · b7_df_nav · b7_nf_asst · b7_nf_nav · b7_yield · b7_end(B7) · stop
+ *   do_check · speak_asst · speak_nav(B3) · route_far(B6) · b7_df_asst · b7_df_nav · b7_nf_asst · b7_nf_nav · b7_yield · b7_yield_ntf · b7_end(B7) · stop
  * 음성: Pleos TextToSpeech SDK 3.3.1(ON_DEVICE, 앱 등록 불필요). 안드로이드 기본 TTS는 이 기기에서 초기화 실패(v0.5, status=-1).
  * 용도: USAGE_ANNOUNCEMENT는 시스템 전용(@SystemApi) → 일반 앱이 쓸 수 있는 ASSISTANT·NAVIGATION_GUIDANCE를 비교.
  * B7: 운전약속 발화와 기본 내비 안내가 겹칠 때 시스템(오디오 포커스·음성 서비스)이 어떻게 처리하는지, 앱이 스스로 물러설 수 있는지 확인.
+ * v0.7: 내비 안내 한 건 = 재생기 2개(먼저 짧은 소리 약 1초 + 이어서 말소리 약 2초, v0.6 실측) → 내비 소리 ‘끝’은 내비 재생기가 모두 사라진 때.
+ *       다시 말하기 = 내비 재생기 0개로 1.5초 조용 + 포커스 회복(GAIN, 없으면 3초 더 기다린 뒤). 그 사이 내비가 또 소리를 내면 처음부터 다시 기다림.
  */
 class ProbeService : Service() {
     companion object {
         const val NAV = AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE
         const val ASST = AudioAttributes.USAGE_ASSISTANT
+        const val NTF = AudioAttributes.USAGE_NOTIFICATION   // 2순위 대체 용도(내비 안내 용도를 못 쓰게 될 때)
+        const val GAP_MS = 1500L        // 내비 끝 → 다시 말하기(GAP_AFTER_NAV)
+        const val GAIN_WAIT_MS = 3000L  // 포커스 회복(GAIN)이 안 와도 이만큼 더 조용하면 다시 말함
         const val SHORT_TEXT = "운전약속 시험 발화입니다. 주행 중에도 들리는지 확인합니다."
         const val LONG_TEXT = "운전약속 겹침 시험입니다. 지금부터 십오 초쯤 길게 말하겠습니다. " +
             "이 사이에 내비게이션이 회전 안내를 하면, 두 목소리가 겹치는지, 어느 한쪽이 멈추는지, " +
@@ -88,13 +93,19 @@ class ProbeService : Service() {
     // ---- 재생 감시(AudioPlaybackCallback — 일반 앱은 익명화된 목록: 용도·내용 종류만 보임)
     private var playCb: AudioManager.AudioPlaybackCallback? = null
     private var lastKeys: Set<String> = emptySet()
-    private var navKey = ""
-    private var navT = 0L
+    private val navKeys = LinkedHashSet<String>()   // 지금 소리를 내는 내비 안내 재생기(우리 것 제외)
+    private var navT = 0L                           // 이번 내비 소리 묶음이 시작된 시각
+    private var lastNavEnd = 0L                     // 내비 재생기가 모두 사라진 마지막 시각
 
     // ---- B7 겹침 시험
     private var b7Mode = "none"
     private var pendingNavFirst: Pair<Int, String>? = null
     private var yieldWaiting = false
+    private var yieldUsage = NAV
+    private var yieldTag = "nav"
+    private var focusLost = false
+    private var yields = 0
+    private val retryCheck = Runnable { yieldRetry() }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -125,7 +136,8 @@ class ProbeService : Service() {
             "b7_df_nav" -> b7DpFirst(NAV, "nav")
             "b7_nf_asst" -> b7NavFirst(ASST, "asst")
             "b7_nf_nav" -> b7NavFirst(NAV, "nav")
-            "b7_yield" -> b7Yield()
+            "b7_yield" -> b7Yield(NAV, "nav")
+            "b7_yield_ntf" -> b7Yield(NTF, "ntf")
             "b7_end" -> b7End("cmd")
             "stop" -> stopSelf()
         }
@@ -378,11 +390,13 @@ class ProbeService : Service() {
                 selfWait = false
                 selfKey = x.key
                 P.log("self_player", "key" to x.key, "usage" to x.usage, "content" to x.content, "ms" to now - speakT, "id" to curId)
-            } else if (x.usage == NAV) {
-                onNavAudioStart(x.key, now)
+            } else if (x.usage == NAV && x.key != selfKey) {
+                val first = navKeys.isEmpty()
+                navKeys.add(x.key)
+                if (first) onNavAudioStart(x.key, now) else P.log("nav_audio", "s" to "more", "key" to x.key, "n" to navKeys.size)
             }
         }
-        if (navKey.isNotEmpty() && navKey !in cur) onNavAudioEnd(now)
+        if (navKeys.isNotEmpty() && navKeys.retainAll(cur) && navKeys.isEmpty()) onNavAudioEnd(now)
         if (selfKey.isNotEmpty() && selfKey !in cur) {
             P.log("self_player_end", "key" to selfKey, "id" to curId)
             selfKey = ""
@@ -390,33 +404,49 @@ class ProbeService : Service() {
     }
 
     private fun onNavAudioStart(key: String, now: Long) {
-        if (navKey.isNotEmpty()) return
-        navKey = key
         navT = now
-        P.log("nav_audio", "s" to "start", "key" to key, "mode" to b7Mode, "speaking" to speaking)
+        b7h.removeCallbacks(retryCheck)   // 기다리는 중에 내비가 또 말함 → 다음 끝을 다시 기다림
+        P.log("nav_audio", "s" to "start", "key" to key, "mode" to b7Mode, "speaking" to speaking, "waiting" to yieldWaiting)
         if (b7Mode.startsWith("nav_first")) {
             pendingNavFirst?.let { p ->
                 pendingNavFirst = null
                 speak(p.first, p.second, LONG_TEXT, "b7nf")
             }
-        } else if (b7Mode == "yield_nav" && speaking && !yieldWaiting) {
-            yieldWaiting = true
-            P.log("yield", "s" to "stop", "via" to "play", "id" to curId)
-            try { tts?.stop() } catch (e: Throwable) { P.log("tts_stop_error", "err" to e) }
+        } else if (b7Mode.startsWith("yield") && speaking && !yieldWaiting) {
+            yieldStop("play")
         }
     }
 
     private fun onNavAudioEnd(now: Long) {
-        P.log("nav_audio", "s" to "end", "key" to navKey, "dur" to now - navT, "mode" to b7Mode)
-        navKey = ""
-        if (b7Mode == "yield_nav" && yieldWaiting) b7h.postDelayed({ yieldRetry() }, 1500)
+        lastNavEnd = now
+        P.log("nav_audio", "s" to "end", "dur" to now - navT, "mode" to b7Mode, "waiting" to yieldWaiting)
+        if (b7Mode.startsWith("yield") && yieldWaiting) {
+            b7h.removeCallbacks(retryCheck)
+            b7h.postDelayed(retryCheck, GAP_MS)
+        }
     }
 
-    /** 물러선 뒤: 포커스를 돌려받거나(GAIN) 내비 소리가 끝나고 1.5초 조용하면 짧게 다시 말함(그 사이 내비가 또 말하면 다음 끝을 기다림) */
+    /** 물러서기: 첫 신호(내비 재생기 등장 또는 포커스 잃음)에서 바로 멈춤 — 포커스 요청은 쥔 채 기다려 내비가 끝나면 GAIN을 받음 */
+    private fun yieldStop(via: String) {
+        yieldWaiting = true
+        yields++
+        P.log("yield", "s" to "stop", "via" to via, "id" to curId, "n" to yields)
+        try { tts?.stop() } catch (e: Throwable) { P.log("tts_stop_error", "err" to e) }
+    }
+
+    /** 다시 말하기 조건: 내비 재생기 0개 · 마지막 내비 소리 뒤 1.5초 조용 · 포커스 회복(GAIN) 또는 그 뒤 3초 더 조용. 조건이 안 되면 남은 시간만큼 뒤에 다시 확인 */
     private fun yieldRetry() {
-        if (b7Mode != "yield_nav" || !yieldWaiting) return
-        if (navKey.isNotEmpty()) {
-            P.log("yield", "s" to "wait_more", "nav" to navKey)
+        if (!b7Mode.startsWith("yield") || !yieldWaiting) return
+        val now = System.currentTimeMillis()
+        if (navKeys.isNotEmpty()) {
+            P.log("yield", "s" to "wait_more", "nav" to navKeys.joinToString("+"))
+            return   // 내비 소리가 끝나면 onNavAudioEnd가 다시 부름
+        }
+        val quiet = now - lastNavEnd
+        val need = if (focusLost) GAP_MS + GAIN_WAIT_MS else GAP_MS
+        if (quiet < need) {
+            b7h.removeCallbacks(retryCheck)
+            b7h.postDelayed(retryCheck, need - quiet)
             return
         }
         if (speaking) {
@@ -425,8 +455,8 @@ class ProbeService : Service() {
             abandonFocus()
         }
         yieldWaiting = false
-        P.log("yield", "s" to "resume")
-        speak(NAV, "nav", RETRY_TEXT, "b7yr", pauseWhenDucked = true)
+        P.log("yield", "s" to "resume", "quiet" to quiet, "gain" to !focusLost)
+        speak(yieldUsage, yieldTag, RETRY_TEXT, "b7yr", pauseWhenDucked = true)
     }
 
     // ---------------------------------------------------------------- 음성: Pleos TextToSpeech(ON_DEVICE) + 오디오 포커스
@@ -470,7 +500,7 @@ class ProbeService : Service() {
             "onDone", "onStop", "onError" -> {
                 speaking = false
                 selfWait = false
-                if (!(b7Mode == "yield_nav" && yieldWaiting)) abandonFocus()  // 물러서 기다리는 중엔 포커스 요청을 유지 → 내비가 끝나면 GAIN
+                if (!(b7Mode.startsWith("yield") && yieldWaiting)) abandonFocus()  // 물러서 기다리는 중엔 포커스 요청을 유지 → 내비가 끝나면 GAIN
             }
         }
     }
@@ -515,6 +545,7 @@ class ProbeService : Service() {
      */
     private fun requestFocus(attrs: AudioAttributes, tag: String, pauseWhenDucked: Boolean = false) {
         abandonFocus()
+        focusLost = false
         try {
             val fr = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
                 .setAudioAttributes(attrs)
@@ -531,14 +562,16 @@ class ProbeService : Service() {
 
     private fun onFocusChange(ch: Int) {
         P.log("focus_change", "usage" to focusTag, "change" to ch, "mode" to b7Mode, "speaking" to speaking)
-        if (b7Mode != "yield_nav") return
+        if (ch < 0) focusLost = true else if (ch == AudioManager.AUDIOFOCUS_GAIN) focusLost = false
+        if (!b7Mode.startsWith("yield")) return
         if (ch < 0 && speaking && !yieldWaiting) {  // LOSS(-1)·LOSS_TRANSIENT(-2)·LOSS_TRANSIENT_CAN_DUCK(-3)
-            yieldWaiting = true
-            P.log("yield", "s" to "stop", "via" to "focus", "id" to curId)
-            try { tts?.stop() } catch (e: Throwable) { P.log("tts_stop_error", "err" to e) }
+            yieldStop("focus")
         } else if (ch == AudioManager.AUDIOFOCUS_GAIN && yieldWaiting) {
-            P.log("yield", "s" to "gain")
-            b7h.postDelayed({ yieldRetry() }, 1500)
+            P.log("yield", "s" to "gain", "nav" to navKeys.size)
+            if (navKeys.isEmpty()) {
+                b7h.removeCallbacks(retryCheck)
+                b7h.post(retryCheck)   // 조용한 시간은 yieldRetry가 계산(1.5초가 안 됐으면 남은 만큼 기다림)
+            }
         }
     }
 
@@ -557,8 +590,9 @@ class ProbeService : Service() {
         b7h.removeCallbacksAndMessages(null)
         pendingNavFirst = null
         yieldWaiting = false
+        yields = 0
         b7Mode = mode
-        P.log("b7_case", "mode" to mode, "speaking" to speaking, "navAudio" to navKey.isNotEmpty())
+        P.log("b7_case", "mode" to mode, "speaking" to speaking, "navAudio" to navKeys.isNotEmpty())
     }
 
     /** 운전약속이 먼저 길게 말하는 중에 경로를 시작 → 내비가 회전 안내를 끼워 넣음 */
@@ -595,10 +629,12 @@ class ProbeService : Service() {
         }
     }
 
-    /** 정책 후보 시연: 내비 안내 용도 + pauseWhenDucked로 말하다가 내비가 포커스를 요청하면(1차) 또는 내비 소리가 보이면(2차) 즉시 멈추고, 끝나면 1.5초 뒤 짧게 다시 */
-    private fun b7Yield() {
-        b7Reset("yield_nav")
-        speak(NAV, "nav", LONG_TEXT, "b7y", pauseWhenDucked = true)
+    /** 정책 시연: 내비 안내 용도(또는 2순위 알림 용도) + pauseWhenDucked로 말하다가 내비 소리가 보이거나(재생 목록) 포커스를 잃으면 바로 멈추고, 내비 재생기가 모두 끝나 1.5초 조용하면 짧게 다시 */
+    private fun b7Yield(usage: Int, tag: String) {
+        b7Reset(if (usage == NAV) "yield_nav" else "yield_$tag")
+        yieldUsage = usage
+        yieldTag = tag
+        speak(usage, tag, LONG_TEXT, "b7y", pauseWhenDucked = true)
         b7h.postDelayed({ routeFar() }, 1200)
     }
 
@@ -608,6 +644,7 @@ class ProbeService : Service() {
         b7Mode = "none"
         pendingNavFirst = null
         yieldWaiting = false
+        yields = 0
         if (speaking) {
             try { tts?.stop() } catch (e: Throwable) { P.log("tts_stop_error", "err" to e) }
         }
