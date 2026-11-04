@@ -36,7 +36,8 @@ import kotlin.reflect.full.declaredMemberFunctions
 
 /**
  * G1-B 포그라운드 서비스 — 화면과 무관하게 돌며 결과를 logcat(G1B)에 남김.
- * 명령: adb shell am start-foreground-service -n app.drivepromise.probe/.ProbeService --es cmd <do_check|speak_ann|speak_nav|route_far|stop>
+ * 명령: adb shell am start-foreground-service -n app.drivepromise.probe/.ProbeService --es cmd <do_check|speak_asst|speak_nav|route_far|stop>
+ * 발화 용도: USAGE_ANNOUNCEMENT는 시스템 전용(@SystemApi)이라 일반 앱은 ASSISTANT·NAVIGATION_GUIDANCE만 비교
  */
 class ProbeService : Service() {
     private var car: Car? = null
@@ -71,7 +72,7 @@ class ProbeService : Service() {
         P.log("cmd", "cmd" to cmd)
         when (cmd) {
             "do_check" -> doCheck()
-            "speak_ann" -> speak(AudioAttributes.USAGE_ANNOUNCEMENT, "ann")
+            "speak_asst", "speak_ann" -> speak(AudioAttributes.USAGE_ASSISTANT, "asst")
             "speak_nav" -> speak(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE, "nav")
             "route_far" -> routeFar()
             "stop" -> stopSelf()
