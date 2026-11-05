@@ -1,9 +1,20 @@
-// :app — 운전약속(DrivePromise) Pleos 차량용 앱. 판단은 :core, 여기는 어댑터(platform/)·서비스·정차 화면·리플레이 자산.
+// :app — 운전약속(DrivePromise) Pleos 차량용 앱. 판단은 :core, 여기는 어댑터(platform/)·서비스·화면 2개·리플레이 자산.
 // 버전·의존성은 G1-B 프로브(probes/g1b)에서 에뮬레이터 빌드·실행이 확인된 것과 같게 둠.
+// 11/5 제출본(v1.0.0): release 서명은 저장소 밖 파일(~/.drivepromise/signing.properties)에서만 읽음 — 키·암호는 저장소에 없음.
+// 1.1.0: 위치를 Pleos FusedLocation SDK 1.1.3으로(위치 업데이트 + 약속 구역 근접 알림 이중 확인), 안 되면 Android LocationManager로 자동 전환.
+//   파일이 없으면 서명 없는 release(app-release-unsigned.apk)가 나오며, 제출 스크립트가 처음 한 번 전용 키를 만들어 줌.
+import java.io.File
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
+
+// release 서명 정보 — Gradle 속성 dpSigning(경로)이 있으면 그 파일, 없으면 ~/.drivepromise/signing.properties
+val dpSigningFile: File = (findProperty("dpSigning") as String?)?.let { file(it) }
+    ?: File(System.getProperty("user.home"), ".drivepromise/signing.properties")
+val dpSigning = Properties().apply { if (dpSigningFile.isFile) dpSigningFile.inputStream().use { load(it) } }
 
 android {
     namespace = "app.drivepromise"
@@ -14,13 +25,25 @@ android {
         applicationId = "app.drivepromise"
         minSdk = 33
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1"
+        versionCode = 3
+        versionName = "1.1.0"   // 공모전 1차 제출본(11/15) — Pleos FusedLocation 적용
+    }
+
+    signingConfigs {
+        if (dpSigning.getProperty("storeFile") != null) {
+            create("release") {
+                storeFile = file(dpSigning.getProperty("storeFile"))
+                storePassword = dpSigning.getProperty("storePassword")
+                keyAlias = dpSigning.getProperty("keyAlias")
+                keyPassword = dpSigning.getProperty("keyPassword")
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false   // 심사용 APK — 난독화 없이(Pleos SDK 리플렉션 사용)
+            signingConfig = signingConfigs.findByName("release")   // 없으면 서명 없는 release
         }
     }
     compileOptions {
@@ -46,5 +69,6 @@ dependencies {
     implementation("ai.pleos.playground:Vehicle:2.3.2")        // 2.3.1은 Maven에 없음(1일차 실측)
     implementation("ai.pleos.playground:NaviHelper:3.0.5")
     implementation("ai.pleos.playground:TextToSpeech:3.3.1")   // Pleos 음성 합성(ON_DEVICE) — 기기 기본 TTS는 초기화 실패(G1-B v0.5)
+    implementation("ai.pleos.playground:FusedLocation:1.1.3")  // Pleos 위치(공식 샘플과 같은 버전) — 에뮬레이터 Supported·Ready, geo fix 1 Hz 반영, 근접 알림 ENTER/EXIT(11/4 실측)
     implementation("org.jetbrains.kotlin:kotlin-reflect:2.0.0")
 }

@@ -13,8 +13,9 @@ import app.drivepromise.core.source.LocationSource
 import app.drivepromise.core.source.Sink
 
 /**
- * 위치 원천 — LocationManager(fused가 있으면 fused, 아니면 gps). 1초 간격. 권한이 없으면 아무것도 보내지 않고 기록만 남김
+ * 위치 대체 원천(fallback) — Android LocationManager(fused가 있으면 fused, 아니면 gps). 1초 간격. 권한이 없으면 아무것도 보내지 않고 기록만 남김
  * (리플레이 시연은 위치 권한 없이도 동작). S5-4(11/4): 에뮬레이터 geo fix가 gps provider에 그대로 반영됨.
+ * 1.1.0부터 주 원천은 [PleosFusedLocationSource](Pleos FusedLocation SDK)이고, 이 클래스는 그쪽이 안 될 때만 켜집니다.
  */
 class PleosLocationSource(private val ctx: Context, private val main: Handler) : LocationSource {
     private var lm: LocationManager? = null

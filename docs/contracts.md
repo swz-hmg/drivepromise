@@ -50,13 +50,25 @@ DrivePromise core contract v0.1 — frozen on 2026-11-05. 실차(Pleos·AAOS 어
 ```kotlin
 fun interface Sink<in T> { fun accept(value: T) }
 interface Source<out T> { fun start(sink: Sink<T>): AutoCloseable }
-interface LocationSource : Source<GeoFix>
+interface LocationSource : Source<GeoFix>                 // 앱: PleosFusedLocationSource(주, Pleos FusedLocation 1.1.3) → 안 되면 PleosLocationSource(LocationManager)
 interface VehicleSource : Source<VehicleSnapshot>          // 속성별 변경을 합친 전체 상태
 interface RouteSource : Source<NaviEvent> {
     fun planRoutes(dest: Place, options: List<RouteOption>, done: Sink<RoutePlans>): AutoCloseable   // 결과(실패 포함) 한 번
 }
 fun interface Clock { fun nowMs(): Long }
 ```
+
+**위치 원천 구현(앱 1.1.0)** — 코어 계약은 그대로이고 앱 쪽 어댑터만 바뀜.
+
+| 규칙 | 내용 |
+|---|---|
+| 켜는 순서 | `isSupported()` → 권한 `pleos.car.permission.FUSED_LOCATION` → `initialize()`(한 번) → `registerFusedLocationCallback` + `getLastKnownLocation` (세션마다 등록·해제, 서비스 끝에 `release()`) |
+| 대체 | 지원 안 함 · 권한 없음 · 등록 오류 · SDK `onError`(첫 좌표 전) · 첫 좌표 15초 없음 · 10초 넘게 끊김 → LocationManager(1초)를 함께 켬 |
+| 우선 | 둘 다 돌 때 최근 3초 안에 Pleos 좌표가 있으면 대체 좌표는 버림(두 원천이 번갈아 들어와 ‘멀어지는 중’ 판단이 흔들리지 않게) |
+| 변환 | `LocationData(latitude, longitude, heading, confidence, …)` → `GeoFix(tMillis=수신 시각, lat, lon, speedMps=null, bearingDeg=heading(0~360일 때), accuracyM=null)` — 속도는 차량 신호, confidence는 거리 단위가 아니라 기록만 |
+| 스레드 | SDK 콜백은 모두 메인 Handler로 넘겨 코어(단일 스레드)에 넣음 · 세션 번호(gen)로 닫힌 세션의 늦은 좌표를 버림 |
+| 약속 구역 이중 확인 | 판정은 코어(거리). 같은 구역에 Pleos 근접 알림(ENTER/EXIT)을 걸고 전이를 `geofence`·`zone_xcheck(agree)`로 기록·부제에 표시 — 코어 결정은 바꾸지 않음 |
+| 기록 | 좌표는 logcat에만 소수 4자리(약 11 m), Ledger에는 넣지 않음(1장 개인정보 원칙 유지) |
 
 `RoutePlans(plans, error)` — 실패면 plans가 비고 error에 원인(예: `CAUSE_SEARCH_ROUTE`).
 
@@ -198,7 +210,7 @@ yielded(id): yields + 1, 다시 대기(다음엔 짧은 문장)
 
 ## 8. 시험 (`./gradlew :core:test`)
 
-스펙 75개(S01~S41 `Specs.kt`, S42~S56 `EngineSpecs.kt`, S57~S75 `SessionSpecs.kt`) — 같은 목록을 JUnit 5(`CoreSpecsTest`, 동적 시험)와 의존성 없는 점검 러너가 돌립니다. S72는 `demo/trips/*.json`(시연 트립 4개, 앱 assets와 같은 파일)을 읽습니다.
+스펙 76개(S01~S41 `Specs.kt`, S42~S56·S76 `EngineSpecs.kt`, S57~S75 `SessionSpecs.kt`) — 같은 목록을 JUnit 5(`CoreSpecsTest`, 동적 시험)와 의존성 없는 점검 러너가 돌립니다. S72는 `demo/trips/*.json`(시연 트립 4개, 앱 assets와 같은 파일)을 읽습니다.
 
 | 묶음 | 스펙 |
 |---|---|
@@ -234,9 +246,9 @@ object PreTripPlanner { fun plan(Input(nowMs, originLat, originLon, plans, promi
 | 고속도로 대신 | 제한속도 ≥ 100 또는 도로 이름(고속도로·고속국도·Expressway)이면 MISSED(그 주행 내내) | “고속도로에 들어섰어요. 약속과 달라요. 다음 나들목에서 내려갈지 정해요.” |
 | 비 오는 날 | 와이퍼 60초 이상 → 비 · 비 중 제한속도의 80%(젖은 노면 20% 감속) 넘으면 AT_RISK · 와이퍼 5분 멈추면 끝 | 비 시작: “비가 와요. 약속대로 평소보다 천천히…” · 30초 넘게 빠르면: “빗길에 70예요. 48 아래로 줄여요.” |
 | 2시간 쉬기 | 운전 ≥ 110분 AT_RISK · ≥ 120분 MISSED(말은 RestTracker) | — |
-| 약속 구역(중심·반경) | 밖 MISSED · 경계 300 m 안쪽에서 바깥으로 움직이면 AT_RISK · 안 ON_TRACK | 예고(UNTIL_DEADLINE 60초): “약속 구역 끝이 가까워요…” · 밖: “약속 구역 밖이에요. 안전한 곳에서 돌아가요.” · 돌아오면(INFO): “약속 구역으로 돌아왔어요.” |
+| 약속 구역(중심·반경) | 밖 MISSED(나갈 때는 경계, 돌아올 때는 경계 안쪽 100 m — 히스테리시스) · 경계 300 m 안쪽에서 바깥으로 움직이면 AT_RISK · 안 ON_TRACK | 예고(UNTIL_DEADLINE 60초): “약속 구역 끝이 가까워요…” · 밖: “약속 구역 밖이에요. 안전한 곳에서 돌아가요.” · 돌아오면(INFO): “약속 구역으로 돌아왔어요.” |
 
-EnginePolicy 기본값: rainOnMs 60 000 · rainOffMs 300 000 · rainSpeedFactor 0.8 · rainDefaultLimitKph 60 · rainFastHoldMs 30 000 · highwaySpeedLimitKph 100 · zoneEdgeM 300 · darkHysteresisMs 300 000 · zone Asia/Seoul. 모든 말은 `speakWhen = 주행 중`(세워 둔 동안 미룸).
+EnginePolicy 기본값: rainOnMs 60 000 · rainOffMs 300 000 · rainSpeedFactor 0.8 · rainDefaultLimitKph 60 · rainFastHoldMs 30 000 · highwaySpeedLimitKph 100 · zoneEdgeM 300 · zoneBackM 100 · darkHysteresisMs 300 000 · zone Asia/Seoul. 약속 경고(PROMISE)는 `speakWhen = 주행 중`(세워 둔 동안 미룸) — ‘돌아왔어요’(INFO)는 세워 둔 동안에도 말함.
 
 PreTripPlanner 선택 규칙: 위반 0인 후보 중 가장 빠른 것 → 없으면 해 지기 전에 도착하는 것 → 없으면 가장 빠른 것. 문장: 선택 경로·소요 시간 / 해 지기 전(정상·직전·늦음 — 늦으면 출발 시한 또는 ‘다른 날·동승’) / 고속도로 유무 / 2시간 넘으면 쉬기 안내. 경로가 없으면 오류 문장.
 
@@ -311,6 +323,8 @@ class TripSession { val lastSpoken: Step.Speak?; val lastSpokenAtMs: Long?; fun 
 | 제한속도(앱) | onDrivingInfo/onRouteStateInfo의 speedLimit 필드 | **+ `onCurrentRoadSpeedLimit`(매초, 0=없음)** → `NaviEvent.SpeedLimit`(0보다 크고 바뀔 때만) | 11/5 실측에서 확인한 콜백 이름. 계약 변경 없음 |
 | 화면 모드(11/5 Q036) | 주행 중 화면 없음(음성만, DO 선언 안 함 — 11/5 기본값) | **DO 인정을 가정해 주행 화면(DriveActivity, DO 선언) 추가 — `ui.ModeResolver`(결정표·히스테리시스·능력 판단)·`TripSession.repeatLast()`·스펙 S73~S75** | 사용자 요청(Q036). 가정이 틀린 환경에서는 차단 감지로 음성만(바닥 모드) — 판단·발화 계약은 그대로 |
 | 어댑터 수명(앱) | 세션마다 start/close | **차량·내비 어댑터는 서비스 수명 동안 한 번만 초기화, 세션은 받는 쪽만 교체**(`shutdown()`은 서비스 종료 때) | 실측: startReal이 3회 불려(생성·권한 결과·리플레이 끝) Car·Vehicle SDK·NaviHelper가 매번 다시 초기화됨 — 낭비·중복 로그 |
+| 제출본(11/5 Q038) | versionCode 1 · 0.1 · release 서명 없음 | **1.0.0(versionCode 2) · release는 저장소 밖 키(`~/.drivepromise/signing.properties`)로 서명, 난독화 없음 · `apk/DrivePromiseTeam_DrivePromise_release.apk` · README(심사용 4항목)·`docs/MANUAL.md`** | 공모전 제출 안내(README 필수 항목·`apk/` 경로·release APK). 코어·앱 동작 변경 없음(스펙 75개 그대로) |
+| 위치(11/5 Q039) | LocationManager(fused/gps) | **Pleos FusedLocation 1.1.3 주 · LocationManager 대체 · 약속 구역 근접 알림 이중 확인(기록만) · 경계 히스테리시스 `zoneBackM` 100 m(S76) · 앱 1.1.0(versionCode 3)** | 실제 위치를 Pleos SDK에서 받고(기술 활용), 플랫폼 근접 알림으로 구역 판정을 한 번 더 확인. 히스테리시스가 없으면 경계에 선 채 GPS가 ±30 m 흔들릴 때 ‘돌아왔어요/밖이에요’를 되풀이함(S76이 옛 코드에서 실패로 확인) |
 
 ## 10. 다음(이 계약 위에)
 

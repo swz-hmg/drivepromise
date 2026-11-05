@@ -15,6 +15,7 @@ import android.os.IBinder
 import android.os.Looper
 import app.drivepromise.core.ledger.LedgerEvent
 import app.drivepromise.core.ledger.LedgerSink
+import app.drivepromise.core.model.Promise
 import app.drivepromise.core.model.PromiseStatus
 import app.drivepromise.core.plan.PreTripPlanner
 import app.drivepromise.core.replay.ReplayPlayer
@@ -27,6 +28,7 @@ import app.drivepromise.core.speech.Step
 import app.drivepromise.core.ui.PresentationMode
 import app.drivepromise.core.ui.ScreenWhileDriving
 import app.drivepromise.platform.PleosCarUx
+import app.drivepromise.platform.PleosFusedLocationSource
 import app.drivepromise.platform.PleosLocationSource
 import app.drivepromise.platform.PleosRouteSource
 import app.drivepromise.platform.PleosVehicleSource
@@ -64,7 +66,8 @@ class DrivePromiseService : Service() {
     private var voice: PleosVoice? = null
     private var vehicleSrc: PleosVehicleSource? = null
     private var routeSrc: PleosRouteSource? = null
-    private var locSrc: PleosLocationSource? = null
+    private var locSrc: PleosFusedLocationSource? = null   // 주: Pleos FusedLocation · 대체: LocationManager
+    private var zoneWatch: AutoCloseable? = null           // 약속 구역 Pleos 근접 알림(이중 확인)
     var session: TripSession? = null
         private set
     var replay: ReplayPlayer? = null
@@ -101,7 +104,7 @@ class DrivePromiseService : Service() {
         voice = v
         vehicleSrc = PleosVehicleSource(this, main)
         routeSrc = PleosRouteSource(this, main)
-        locSrc = PleosLocationSource(this, main)
+        locSrc = PleosFusedLocationSource(this, main, fallback = PleosLocationSource(this, main))
         screen.user = prefs.screenWhileDriving
         screen.assumeDo = prefs.assumeDo
         val ux = PleosCarUx(this, main) { screen.update(session?.phase == TripSession.Phase.DRIVING, "uxr") }
@@ -144,8 +147,11 @@ class DrivePromiseService : Service() {
         L.log("svc", "s" to "destroy")
         main.removeCallbacksAndMessages(null)
         saveRest()
+        zoneWatch?.close()
+        zoneWatch = null
         session?.close()
         session = null
+        locSrc?.shutdown()
         vehicleSrc?.shutdown()
         routeSrc?.shutdown()
         carUx?.stop()
@@ -166,6 +172,7 @@ class DrivePromiseService : Service() {
         prefs.restState()?.let { st -> s.restoreRest(st); L.log("rest_restore", "drivingMin" to st.drivingMs / 60_000, "main" to st.mainDone) }
         s.attach(locSrc, vehicleSrc, routeSrc)   // 차량·내비 어댑터는 한 번만 초기화되고 세션마다 받는 쪽만 바뀜
         session = s
+        watchZone(s)
         L.log("session", "mode" to "real", "promises" to s.promises.joinToString("+") { it.id }, "vehicle" to vehicleSrc?.sources?.joinToString("+"))
     }
 
@@ -185,9 +192,25 @@ class DrivePromiseService : Service() {
     }
 
     private fun closeSession() {
+        zoneWatch?.close()
+        zoneWatch = null
         session?.close()
         session = null
     }
+
+    /** 약속 구역에 Pleos 근접 알림을 걺 — ENTER/EXIT를 코어 판정(거리)과 나란히 기록(이중 확인). 코어 결정은 바꾸지 않음 */
+    private fun watchZone(s: TripSession) {
+        val z = s.promises.filterIsInstance<Promise.StayInZone>().firstOrNull() ?: return
+        zoneWatch = locSrc?.watchZone(z.lat, z.lon, z.radiusM) { inside ->
+            val core = session?.statuses?.get(z.id)
+            L.log("zone_xcheck", "pleos" to (if (inside) "inside" else "outside"), "core" to core,
+                "agree" to (core != null && core != PromiseStatus.UNKNOWN && inside == (core != PromiseStatus.MISSED)))
+        }
+    }
+
+    /** 정차 화면 부제용 — 지금 좌표를 넣는 원천과 Pleos 근접 알림이 알려 준 구역 안/밖 */
+    fun locationActive(): PleosFusedLocationSource.Active = if (mode == Mode.REAL) locSrc?.active ?: PleosFusedLocationSource.Active.NONE else PleosFusedLocationSource.Active.NONE
+    fun zoneInsideByPleos(): Boolean? = if (mode == Mode.REAL) locSrc?.zoneInside else null
 
     private fun newSession(clock: Clock, forReplay: Boolean): TripSession {
         val ext: LedgerSink = if (forReplay) LedgerSink { } else ledgerFile   // 리플레이 기록은 세션 안(메모리)에만 — 실주행 지표를 더럽히지 않게
@@ -319,7 +342,8 @@ class DrivePromiseService : Service() {
         val s = session
         L.log("status_now", "mode" to mode, "phase" to s?.phase, "drivingMin" to (s?.drivingMs ?: 0) / 60_000,
             "s" to s?.statuses?.entries?.joinToString(",") { "${it.key}:${it.value}" }, "tts" to voice?.ready, "replay" to replayName,
-            "screen" to screen.mode, "cap" to screenCapabilityText(), "ux" to uxText())
+            "screen" to screen.mode, "cap" to screenCapabilityText(), "ux" to uxText(),
+            "loc" to locSrc?.active, "fixes" to "${locSrc?.pleosFixes ?: 0}+${locSrc?.fallbackFixes ?: 0}", "zoneP" to locSrc?.zoneInside)
     }
 
     private fun startInForeground() {

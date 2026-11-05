@@ -38,6 +38,8 @@ data class EnginePolicy(
     val highwayRoadKeywords: List<String> = listOf("고속도로", "고속국도", "Expressway"),
     /** 경계에서 이만큼 안쪽부터 ‘끝이 가까움’ */
     val zoneEdgeM: Int = 300,
+    /** 밖에 나간 뒤에는 경계에서 이만큼 안쪽으로 들어와야 ‘돌아옴’ — 실제 위치(FusedLocation)의 흔들림에 말·상태가 깜빡이지 않게(11/5, S76) */
+    val zoneBackM: Int = 100,
     /** 해 지기 전 귀가: 위험 → 정상으로 되돌리는 여유(깜빡임 방지) */
     val darkHysteresisMs: Long = 5 * 60_000,
     val zone: ZoneId = ZoneId.of("Asia/Seoul"),
@@ -232,7 +234,7 @@ class PromiseEngine(
         val movingOut = prevDist?.let { d > it + 0.5 } ?: false
         prevDist = d
         val now = w.tMillis
-        val isOut = d > p.radiusM
+        val isOut = if (outside) d > p.radiusM - policy.zoneBackM else d > p.radiusM   // 히스테리시스: 나갈 때는 경계, 돌아올 때는 경계 안쪽 zoneBackM
         if (isOut && !outside) {
             outside = true
             outsideEver = true

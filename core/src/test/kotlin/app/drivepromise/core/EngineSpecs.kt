@@ -27,7 +27,7 @@ import java.time.ZoneId
 import java.time.ZonedDateTime
 import kotlin.math.abs
 
-/** 약속 엔진 v0.1 스펙(S42~S56) — Specs.all 뒤에 이어 붙음. 기준 시각은 2026-11-14(시연 날) 서울 */
+/** 약속 엔진 v0.1 스펙(S42~S56, S76) — Specs.all 뒤에 이어 붙음. 기준 시각은 2026-11-14(시연 날) 서울 */
 object EngineSpecs {
     val all: List<Pair<String, () -> Unit>> = listOf(
         "S42 일몰 계산 — 서울·울산 7날짜가 천체력(PyEphem)·바다타임 표와 60초 안" to ::s42,
@@ -45,6 +45,7 @@ object EngineSpecs {
         "S54 출발 전 계획 — 모두 늦으면 출발 시한 또는 ‘다른 날’, 아슬아슬하면 ‘바로 출발’" to ::s54,
         "S55 출발 전 계획 — 경로가 없으면 오류 문장" to ::s55,
         "S56 시각 읽기 — 오후 5시 22분 · 오후 12시 · 오전 12시 5분 / 5:22 p.m." to ::s56,
+        "S76 약속 구역 — 경계 히스테리시스: 밖에 나간 뒤 경계 안쪽 100 m 이내의 위치 흔들림에는 ‘돌아왔어요’·‘밖이에요’를 반복하지 않고, 100 m 넘게 들어오면 한 번(실제 위치 FusedLocation, 11/5)" to ::s76,
     )
 }
 
@@ -239,6 +240,31 @@ private fun s51() {
     eq(r.sim.log.last().text, "약속 구역으로 돌아왔어요.", "돌아옴 문장")
     eq(r.changes("zone"), listOf("ON_TRACK", "AT_RISK", "MISSED", "ON_TRACK"), "상태 기록")
     eq(r.eng.endTrip(r.world(t0 + 20_100))["zone"], PromiseStatus.MISSED, "한 번 벗어났으면 그 주행은 못 지킴(고속도로와 같은 규칙, 11/5)")
+}
+
+private fun s76() {
+    val r = EngineRig(listOf(Promise.StayInZone(SEOUL_LAT, SEOUL_LON, 2_000)))
+    val t0 = kst(2026, 11, 14, 10, 0)
+    val dLat = 1.0 / 111_195.0   // 1 m
+    var north = 1_500.0
+    r.fixAt = { t -> GeoFix(t, SEOUL_LAT + north * dLat, SEOUL_LON, 15f) }
+    r.run(t0, t0 + 500)
+    north = 2_030.0
+    r.run(t0 + 600, t0 + 6_000)
+    eq(r.status("zone"), PromiseStatus.MISSED, "밖(2,030 m)")
+    for (i in 0 until 10) {   // 경계에 선 채 좌표가 1,970 ↔ 2,030 m로 흔들림(실제 GPS 오차 수준)
+        north = if (i % 2 == 0) 1_970.0 else 2_030.0
+        val a = t0 + 6_100 + i * 3_000L
+        r.run(a, a + 2_900)
+    }
+    eq(r.status("zone"), PromiseStatus.MISSED, "경계 안쪽 100 m 이내의 흔들림은 아직 밖")
+    eq(r.sim.log.count { it.key == "zone.back" }, 0, "‘돌아왔어요’를 반복하지 않음")
+    eq(r.sim.log.count { it.key == "zone.out" }, 1, "‘밖이에요’는 처음 한 번")
+    eq(r.changes("zone").count { it == "MISSED" }, 1, "상태가 깜빡이지 않음")
+    north = 1_850.0
+    r.run(t0 + 40_000, t0 + 46_000)
+    eq(r.status("zone"), PromiseStatus.ON_TRACK, "경계 안쪽 150 m — 돌아옴")
+    eq(r.sim.log.count { it.key == "zone.back" }, 1, "돌아옴 한 번")
 }
 
 private fun s52() {

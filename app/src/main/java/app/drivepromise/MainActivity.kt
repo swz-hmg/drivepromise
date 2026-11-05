@@ -29,6 +29,7 @@ import app.drivepromise.core.session.TripSession
 import app.drivepromise.core.speech.Lang
 import app.drivepromise.core.ui.PresentationMode
 import app.drivepromise.core.ui.ScreenWhileDriving
+import app.drivepromise.platform.PleosFusedLocationSource
 
 /**
  * 정차 화면(DO 선언 없음) — 세워 둔 동안 보는 화면: 약속 타일 5개, 출발 전 계획 카드, 주행 끝 요약, 설정(주행 중 화면·DO 가정·한/영),
@@ -70,7 +71,7 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(buildUi())
-        requestPermissions(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.POST_NOTIFICATIONS), 1)
+        requestPermissions(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, PleosFusedLocationSource.PERMISSION, Manifest.permission.POST_NOTIFICATIONS), 1)
         DrivePromiseService.start(this)
         L.log("act", "s" to "create")
     }
@@ -160,7 +161,15 @@ class MainActivity : Activity() {
             PresentationMode.DRIVE_DO -> if (lang == Lang.KO) "주행 화면+음성" else "drive screen + voice"
             PresentationMode.DRIVE_VOICE -> if (lang == Lang.KO) "주행 음성만" else "drive voice only"
         }
-        subtitle.text = "$phase · ${if (lang == Lang.KO) "연속 운전 ${min}분" else "$min min driving"} · $mode · $vsText · $smText"
+        val locText = when (s.locationActive()) {
+            PleosFusedLocationSource.Active.PLEOS -> if (lang == Lang.KO) "위치 Pleos" else "location Pleos"
+            PleosFusedLocationSource.Active.FALLBACK -> if (lang == Lang.KO) "위치 GPS(대체)" else "location GPS (fallback)"
+            PleosFusedLocationSource.Active.NONE -> if (s.mode == DrivePromiseService.Mode.REAL) (if (lang == Lang.KO) "위치 기다리는 중" else "waiting for location") else null
+        }
+        val zoneText = s.zoneInsideByPleos()?.let { inside ->
+            if (lang == Lang.KO) (if (inside) "구역 안(Pleos 확인)" else "구역 밖(Pleos 확인)") else (if (inside) "in zone (Pleos)" else "out of zone (Pleos)")
+        }
+        subtitle.text = listOfNotNull("$phase", if (lang == Lang.KO) "연속 운전 ${min}분" else "$min min driving", mode, locText, zoneText, vsText, smText).joinToString(" · ")
         screenBtn.text = if (s.prefs.screenWhileDriving == ScreenWhileDriving.ON) (if (lang == Lang.KO) "주행 중 화면: 켜기" else "Screen while driving: on") else (if (lang == Lang.KO) "주행 중 화면: 음성만" else "Screen while driving: voice only")
         assumeBtn.text = (if (lang == Lang.KO) "DO 인정 가정: " else "Assume DO: ") + (if (s.prefs.assumeDo) (if (lang == Lang.KO) "켬" else "on") else (if (lang == Lang.KO) "끔" else "off"))
         // 주행 시작 + 화면 허용 → 주행 화면을 한 번만 띄움(이 화면이 앞에 있을 때만 — 뒤에 있으면 플랫폼 규칙상 띄우지 않음)
@@ -255,12 +264,12 @@ class MainActivity : Activity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         val granted = permissions.indices.filter { grantResults.getOrNull(it) == PackageManager.PERMISSION_GRANTED }.map { permissions[it].substringAfterLast('.') }
         L.log("perm", "granted" to granted.joinToString("+"))
-        if (granted.contains("ACCESS_FINE_LOCATION")) svc?.startReal()   // 위치 원천을 다시 붙임
+        if (granted.contains("ACCESS_FINE_LOCATION") || granted.contains("FUSED_LOCATION")) svc?.startReal()   // 위치 원천(Pleos FusedLocation·대체)을 다시 붙임
     }
 
     companion object {
         /** 기록 칸에 보여 줄 이벤트(어댑터의 매초 콜백은 뺌) */
-        private val SHOW = listOf("speak", "phase", "status", "plan", "summary", "replay_start", "session", "cmd", "tts_init", "tts_init_error", "vsdk", "prop_reg", "location", "perm", "mode", "screen", "do_check", "uxr", "repeat")
+        private val SHOW = listOf("speak", "phase", "status", "plan", "summary", "replay_start", "session", "cmd", "tts_init", "tts_init_error", "vsdk", "prop_reg", "location", "loc_src", "geofence", "zone_xcheck", "perm", "mode", "screen", "do_check", "uxr", "repeat")
         private val BG = Color.parseColor("#0F1418")
         private val CARD = Color.parseColor("#1C262E")
         private val SUB = Color.parseColor("#B0BEC5")

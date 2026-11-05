@@ -22,6 +22,8 @@
     <uses-permission android:name="pleos.car.permission.NAVI_ROUTE_SEARCH" />
     <!-- Pleos TextToSpeech SDK(ON_DEVICE) — 초기화·리스너·발화 모두 이 권한 필요(G1-B v0.6 확인) -->
     <uses-permission android:name="pleos.car.permission.TTS_SERVICE" />
+    <!-- Pleos FusedLocation SDK 1.1.3: 위치 업데이트·근접 알림(공식 샘플과 같은 권한, 런타임 허용 필요) -->
+    <uses-permission android:name="pleos.car.permission.FUSED_LOCATION" />
 
     <!-- Android 11+ 패키지 가시성: Pleos 음성 서비스(CaaS) -->
     <queries>
