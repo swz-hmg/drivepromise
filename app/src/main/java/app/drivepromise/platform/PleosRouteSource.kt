@@ -1,0 +1,159 @@
+package app.drivepromise.platform
+
+import ai.pleos.playground.navi.data.RouteInfo
+import ai.pleos.playground.navi.helper.NaviHelper
+import ai.pleos.playground.navi.helper.listener.NaviHelperEventListener
+import android.content.Context
+import android.os.Handler
+import app.drivepromise.L
+import app.drivepromise.core.model.CautionKind
+import app.drivepromise.core.model.NaviEvent
+import app.drivepromise.core.model.TurnType
+import app.drivepromise.core.source.Place
+import app.drivepromise.core.source.RouteOption
+import app.drivepromise.core.source.RoutePlan
+import app.drivepromise.core.source.RoutePlans
+import app.drivepromise.core.source.RouteSource
+import app.drivepromise.core.source.Sink
+
+/**
+ * 내비 원천 — Pleos NaviHelper 3.0.5. 콜백은 이름 + 인자 toString(data class)으로 받아 코어의 [NaviEvent]로 바꿉니다.
+ * S5-3·G1-B에서 확인한 모양(2026-11-04):
+ *   onRouteStarted(RouteStartInfo(duration=60, distance=50, tollFare=0, name=…)) · onRouteStateInfo(RouteStateInfo(naviMode=ROUTE_GUIDING, routeOption=RECOMMENDED, …))
+ *   onTBTInfo([TBTInfo(type=TURN_ARRIVE, distance=50.0, description=도착)]) · onDrivingInfo(DrivingInfo(destination=DrivingState(duration=60, distance=50, …)))
+ *   onNavigationStatus(ROUTE_DRIVE) · onError(…) · onRouteCancelled
+ *
+ * 출발 전 계획([planRoutes])은 requestRoute로 안내를 시작하고 첫 RouteStartInfo(거리·시간)를 추천 경로 후보 하나로 돌려줍니다 —
+ * 옵션별 경로 ‘검색만’ 하는 API는 SDK 문서를 확인한 뒤(11/8) 붙입니다. 경로 실패(CAUSE_SEARCH_ROUTE 등)는 RouteError로.
+ */
+class PleosRouteSource(private val ctx: Context, private val main: Handler) : RouteSource {
+    private var navi: NaviHelper? = null
+    private var sink: Sink<NaviEvent>? = null
+    private var listener: NaviHelperEventListener? = null
+    private var planDone: Sink<RoutePlans>? = null
+    private var planTimeout: Runnable? = null
+    private var lastSpeedLimit: Int? = null
+
+    override fun start(sink: Sink<NaviEvent>): AutoCloseable {
+        this.sink = sink
+        init()
+        return AutoCloseable {
+            this.sink = null
+            try { navi?.release() } catch (_: Throwable) {}
+            navi = null
+        }
+    }
+
+    private fun init() {
+        try {
+            val h = NaviHelper(ctx.applicationContext)
+            h.initialize()
+            val l = Reflect.proxyOf(NaviHelperEventListener::class.java, "DPNaviListener") { m, args ->
+                val s = args?.joinToString(" ") { it.toString() } ?: ""
+                L.log("navi", "cb" to m, "args" to s.take(300))
+                main.post { onCallback(m, s) }
+            }
+            h.addListener(l)
+            listener = l
+            navi = h
+            L.log("navi_init", "ok" to true, "sdk" to "navihelper-3.0.5")
+        } catch (e: Throwable) {
+            L.log("navi_error", "err" to e)
+        }
+    }
+
+    private fun emit(e: NaviEvent) {
+        sink?.accept(e)
+    }
+
+    /** 콜백 이름·인자 문자열 → NaviEvent (main 스레드) */
+    internal fun onCallback(m: String, s: String) {
+        val now = System.currentTimeMillis()
+        when {
+            m == "onRouteStarted" -> {
+                val dur = Reflect.num(s, "duration")?.toInt()
+                val dist = Reflect.num(s, "distance")?.toInt()
+                if (dur != null && dist != null) {
+                    emit(NaviEvent.Trip(now, now + dur * 1_000L, dist))
+                    finishPlan(RoutePlans(mapOf(RouteOption.RECOMMENDED to RoutePlan(RouteOption.RECOMMENDED, dist, dur))))
+                }
+            }
+            m == "onDrivingInfo" || m == "onRouteStateInfo" -> {
+                val dur = Reflect.num(s, "duration")?.toInt()
+                val dist = Reflect.num(s, "distance")?.toInt()
+                if (dur != null && dist != null && dur > 0) emit(NaviEvent.Trip(now, now + dur * 1_000L, dist))
+                Reflect.num(s, "speedLimit")?.toInt()?.let { lim -> if (lim > 0 && lim != lastSpeedLimit) { lastSpeedLimit = lim; emit(NaviEvent.SpeedLimit(now, lim)) } }
+            }
+            m == "onTBTInfo" -> {
+                val items = Regex("TBTInfo\\((.*?)\\)(?=, TBTInfo\\(|\\]|$)").findAll(s).map { it.groupValues[1] }.toList()
+                val first = items.firstOrNull() ?: return
+                val type = Reflect.word(first, "type") ?: "OTHER"
+                val dist = Reflect.num(first, "distance")?.toInt() ?: return
+                val road = Reflect.text(first, "roadName") ?: Reflect.text(first, "nextRoadName")
+                emit(NaviEvent.Tbt(now, dist, turnOf(type), road))
+                if (type.contains("ARRIVE", ignoreCase = true) && dist <= 20) emit(NaviEvent.Arrived(now))
+            }
+            m.contains("Arriv", ignoreCase = true) || m.contains("Destination", ignoreCase = true) && s.contains("ARRIV", ignoreCase = true) -> emit(NaviEvent.Arrived(now))
+            m == "onNavigationStatus" -> if (s.contains("ARRIV", ignoreCase = true)) emit(NaviEvent.Arrived(now))
+            m == "onRouteCancelled" -> { emit(NaviEvent.RouteError(now, "ROUTE_CANCELLED")); finishPlan(RoutePlans(emptyMap(), "ROUTE_CANCELLED")) }
+            m == "onError" -> {
+                val cause = Reflect.word(s, "cause") ?: Reflect.word(s, "code") ?: s.take(60).ifEmpty { "UNKNOWN" }
+                emit(NaviEvent.RouteError(now, cause))
+                finishPlan(RoutePlans(emptyMap(), cause))
+            }
+            m.contains("Caution", ignoreCase = true) || m.contains("Safety", ignoreCase = true) -> {
+                val type = Reflect.word(s, "type") ?: return
+                emit(NaviEvent.Caution(now, CautionKind.of(type), Reflect.num(s, "distance")?.toInt() ?: 0, type))
+            }
+        }
+    }
+
+    override fun planRoutes(dest: Place, options: List<RouteOption>, done: Sink<RoutePlans>): AutoCloseable {
+        val h = navi
+        if (h == null) {
+            done.accept(RoutePlans(emptyMap(), "NAVI_NOT_READY"))
+            return AutoCloseable { }
+        }
+        planDone?.let { finishPlan(RoutePlans(emptyMap(), "REPLACED")) }
+        planDone = done
+        val to = Runnable { finishPlan(RoutePlans(emptyMap(), "TIMEOUT_30S")) }
+        planTimeout = to
+        main.postDelayed(to, 30_000)
+        try {
+            h.requestRoute(RouteInfo(latitude = dest.lat, longitude = dest.lon, poiId = dest.poiId ?: "", poiName = dest.name, poiSubId = "0", address = ""))
+            L.log("route_req", "ok" to true, "name" to dest.name)
+        } catch (e: Throwable) {
+            L.log("route_error", "err" to e)
+            finishPlan(RoutePlans(emptyMap(), "REQUEST_FAILED"))
+        }
+        return AutoCloseable { if (planDone === done) { planDone = null; planTimeout?.let { main.removeCallbacks(it) } } }
+    }
+
+    private fun finishPlan(p: RoutePlans) {
+        val d = planDone ?: return
+        planDone = null
+        planTimeout?.let { main.removeCallbacks(it) }
+        planTimeout = null
+        d.accept(p)
+    }
+
+    companion object {
+        /** NaviHelper TBT type 이름 → 코어 회전 종류(이름에 든 말로 판단 — 버전마다 상수가 조금 달라도 동작) */
+        fun turnOf(type: String): TurnType {
+            val t = type.uppercase()
+            return when {
+                t.contains("UTURN") || t.contains("U_TURN") -> TurnType.U_TURN
+                t.contains("ARRIVE") || t.contains("DEST") -> TurnType.DESTINATION
+                t.contains("ROUNDABOUT") || t.contains("ROTARY") -> TurnType.ROUNDABOUT
+                t.contains("KEEP_LEFT") || t.contains("LEFT_KEEP") -> TurnType.KEEP_LEFT
+                t.contains("KEEP_RIGHT") || t.contains("RIGHT_KEEP") -> TurnType.KEEP_RIGHT
+                t.contains("LEFT") -> TurnType.LEFT
+                t.contains("RIGHT") -> TurnType.RIGHT
+                t.contains("EXIT") || t.contains("RAMP") || t.contains("IC") -> TurnType.EXIT
+                t.contains("MERGE") || t.contains("JOIN") -> TurnType.MERGE
+                t.contains("STRAIGHT") || t.contains("GO") -> TurnType.STRAIGHT
+                else -> TurnType.OTHER
+            }
+        }
+    }
+}

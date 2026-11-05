@@ -32,6 +32,9 @@ sealed interface LedgerEvent {
     data class RestTaken(override val tMillis: Long, val restStartMs: Long, val segmentDrivingMs: Long) : LedgerEvent
 
     data class TripEnded(override val tMillis: Long, val drivingMs: Long) : LedgerEvent
+
+    /** 약속 상태 변화(PromiseEngine) — 정차 화면 타일·요약·순응 계산용. ★ 약속엔진 v0.1에서 추가(기본값 있는 추가) */
+    data class StatusChanged(override val tMillis: Long, val promiseId: String, val from: String, val to: String, val note: String = "") : LedgerEvent
 }
 
 fun interface LedgerSink {

@@ -81,21 +81,21 @@ object Specs {
         "S39 시간 읽기 — 한 시간 50분·두 시간·두 시간 5분 / 2 hours 5 minutes" to ::s39,
         "S40 영어 문장" to ::s40,
         "S41 미룸 조건 — 세워 둔 동안 미루고 출발하면 말함(버리지 않음)" to ::s41,
-    )
+    ) + EngineSpecs.all + SessionSpecs.all
 }
 
 // ---------------------------------------------------------------- 도우미
-private fun fail(msg: String): Nothing = throw AssertionError(msg)
+internal fun fail(msg: String): Nothing = throw AssertionError(msg)
 
-private fun ok(cond: Boolean, msg: String) {
+internal fun ok(cond: Boolean, msg: String) {
     if (!cond) fail(msg)
 }
 
-private fun <T> eq(actual: T, expected: T, what: String) {
+internal fun <T> eq(actual: T, expected: T, what: String) {
     if (actual != expected) fail("$what — 기대: $expected / 실제: $actual")
 }
 
-private inline fun <reified E : Throwable> throws(what: String, block: () -> Unit): E {
+internal inline fun <reified E : Throwable> throws(what: String, block: () -> Unit): E {
     try {
         block()
     } catch (e: Throwable) {
@@ -105,12 +105,12 @@ private inline fun <reified E : Throwable> throws(what: String, block: () -> Uni
     fail("$what — ${E::class.simpleName}가 나야 함")
 }
 
-private const val MIN = 60_000L
-private val DRIVE = VehicleSnapshot(0, gear = Gear.D, speedMps = 15f)
-private val PARK = VehicleSnapshot(0, gear = Gear.P, speedMps = 0f)
+internal const val MIN = 60_000L
+internal val DRIVE = VehicleSnapshot(0, gear = Gear.D, speedMps = 15f)
+internal val PARK = VehicleSnapshot(0, gear = Gear.P, speedMps = 0f)
 
 /** 대본 창 — 시험마다 열림·닫힘을 정하고, 물어본 길이를 기록 */
-private class ScriptWindows(
+internal class ScriptWindows(
     var normalOk: (Long, Long) -> Boolean = { _, _ -> true },
     var stopOk: (Long) -> Boolean = { false },
     var gapOk: ((Long, Long) -> Boolean)? = null,
@@ -128,7 +128,7 @@ private class ScriptWindows(
     }
 }
 
-private class FakeSpeaker : Speaker {
+internal class FakeSpeaker : Speaker {
     val said = mutableListOf<Pair<Long, String>>()
     val stopped = mutableListOf<Long>()
     override fun speak(id: Long, text: String, usage: AudioUsage) {
@@ -139,10 +139,10 @@ private class FakeSpeaker : Speaker {
     }
 }
 
-private data class Said(val t: Long, val key: String, val text: String, val short: Boolean, val repeat: Int, val attempt: Int)
+internal data class Said(val t: Long, val key: String, val text: String, val short: Boolean, val repeat: Int, val attempt: Int)
 
 /** 10 Hz 루프 흉내 — 말은 예상 길이 뒤 끝난다고 봄. 예약 사건은 그 시각 이후 첫 tick에 원래 시각으로 넣음 */
-private class Sim(val sch: SpeechScheduler, val arb: VoiceArbiter = VoiceArbiter()) {
+internal class Sim(val sch: SpeechScheduler, val arb: VoiceArbiter = VoiceArbiter()) {
     val spk = FakeSpeaker()
     val loop = VoiceLoop(sch, arb, spk)
     val log = mutableListOf<Said>()
@@ -181,7 +181,7 @@ private class Sim(val sch: SpeechScheduler, val arb: VoiceArbiter = VoiceArbiter
     }
 }
 
-private fun sched(w: QuietWindows = ScriptWindows(), p: QuietPolicy = QuietPolicy(), l: MemoryLedger = MemoryLedger()) = SpeechScheduler(p, w, l)
+internal fun sched(w: QuietWindows = ScriptWindows(), p: QuietPolicy = QuietPolicy(), l: MemoryLedger = MemoryLedger()) = SpeechScheduler(p, w, l)
 
 private fun info(key: String, est: Long = 2_000) = Utterance(key, Priority.INFO, est, render = { key })
 
@@ -204,7 +204,7 @@ private fun promise(
     repeatAfterMs = repeatAfter, maxRepeats = maxRepeats, estShortMs = minOf(est, 2_000), speakWhen = speakWhen,
 )
 
-private fun w(t: Long, driving: Long = 0, v: VehicleSnapshot? = DRIVE.copy(tMillis = t)) = World(t, v, drivingMs = driving)
+internal fun w(t: Long, driving: Long = 0, v: VehicleSnapshot? = DRIVE.copy(tMillis = t)) = World(t, v, drivingMs = driving)
 
 /** 쉬기 시험 장치 — RestTracker + 스케줄러 + 루프 */
 private class RestRig(
@@ -668,7 +668,7 @@ private fun s35() {
 }
 
 // ---------------------------------------------------------------- 리플레이·JSON·문장
-private const val PLAN_SAMPLE = """{
+internal const val PLAN_SAMPLE = """{
   "meta": {"name": "병원→집", "speedup": 3.0, "simulated": true, "origin": [37.5665, 126.9780], "schema": "0.2", "start": "2026-11-14T16:50:00+09:00"},
   "location": [
     {"t": 0,  "lat": 37.56650, "lon": 126.97800},

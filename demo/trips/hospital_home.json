@@ -1,0 +1,96 @@
+{
+ "meta": {
+  "name": "병원→집",
+  "schema": "drivepromise.trip/0.2",
+  "speedup": 3.0,
+  "simulated": true,
+  "origin": [
+   37.5665,
+   126.978
+  ],
+  "start": "2026-11-14T16:50:00+09:00"
+ },
+ "location": [
+  {
+   "t": 0,
+   "lat": 37.5665,
+   "lon": 126.978
+  },
+  {
+   "t": 10,
+   "lat": 37.56712,
+   "lon": 126.97905
+  },
+  {
+   "t": 20,
+   "lat": 37.5679,
+   "lon": 126.9801
+  }
+ ],
+ "navi": [
+  {
+   "t": 0,
+   "type": "trip",
+   "etaLocal": "17:28",
+   "remainM": 8200
+  },
+  {
+   "t": 12,
+   "type": "tbt",
+   "turn": "LEFT",
+   "distM": 700
+  },
+  {
+   "t": 30,
+   "type": "tbt",
+   "turn": "LEFT",
+   "distM": 140
+  },
+  {
+   "t": 40,
+   "type": "caution",
+   "kind": "SCHOOL_ZONE",
+   "distM": 200
+  },
+  {
+   "t": 95,
+   "type": "caution",
+   "kind": "WRONG_WAY_DRIVING_ALERT",
+   "distM": 0
+  },
+  {
+   "t": 120,
+   "type": "caution",
+   "kind": "DOWNHILL_CAUTION_AREA",
+   "distM": 300
+  },
+  {
+   "t": 150,
+   "type": "arrived"
+  }
+ ],
+ "vehicle": [
+  {
+   "t": 0,
+   "gear": "D",
+   "speedKph": 0
+  },
+  {
+   "t": 5,
+   "speedKph": 38
+  },
+  {
+   "t": 60,
+   "turnSignal": "LEFT"
+  },
+  {
+   "t": 63,
+   "turnSignal": "OFF"
+  },
+  {
+   "t": 148,
+   "speedKph": 0,
+   "gear": "P"
+  }
+ ]
+}

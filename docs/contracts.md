@@ -24,9 +24,14 @@ DrivePromise core contract v0.1 — frozen on 2026-11-05. 실차(Pleos·AAOS 어
 | `source` | Sink · Source · Location/Vehicle/RouteSource · Place · RouteOption · RoutePlan(s) · Clock | v0.1 고정 |
 | `speech` | Priority · Validity · World · Utterance · QuietPolicy · RestPolicy · QuietWindows · Step · SpeechScheduler · VoiceArbiter · VoiceLoop · Speaker | v0.1 고정 + 구현·시험 |
 | `rest` | RestTracker · Phrases(쉬기 문장 ko/en) | 구현·시험 |
-| `ledger` | LedgerEvent · LedgerSink · MemoryLedger · RestCompliance · RestMetrics | 구현·시험 |
-| `replay` | ReplayParser(스키마 0.2) · ReplayTrip · MiniJson | 구현·시험 |
-| `engine` · `plan` · `gate` · `forecast` · `scene` | PromiseEngine · SolarCalc · PreTripPlanner · QuietWindows 구현 · ConflictForecaster · PromiseComposer | 11/6~11/7 |
+| `ledger` | LedgerEvent · LedgerSink · MemoryLedger · RestCompliance · RestMetrics · **LedgerJson**(JSON Lines 저장 형식, 11/5) | 구현·시험 |
+| `replay` | ReplayParser(스키마 0.2) · ReplayTrip · MiniJson · **ReplayPlayer**(가상 시계 재생기, 11/5) | 구현·시험 |
+| `engine` | PromiseEngine · EnginePolicy — 약속 5종 상태(타일)와 상태 변화의 말 | v0.1(11/6 작업) 구현·시험 |
+| `plan` | SolarCalc(NOAA 일출·일몰·시민 박명) · PreTripPlanner(경로 후보 선택·출발 전 카드 문장) | v0.1(11/6 작업) 구현·시험 |
+| `scene` | PromisePhrases(약속 문장 ko/en, 시각 읽기) · **SummaryPhrases**(약속 이름·상태·주행 끝 한 줄) | 구현·시험 |
+| `gate` | **QuietGate · GatePolicy** — QuietWindows 구현(침묵구간검증 v0.1 선택값 P5) | v0.1(11/7 작업을 11/5에 당김) 구현·시험 |
+| `session` | **TripSession · SessionPolicy** — 상태 기계(PARKED→DRIVING→ENDED)와 부품 배선(앱·리플레이·시험이 같은 코드) | v0.1(11/8 작업을 11/5에 당김) 구현·시험 |
+| `forecast` | ConflictForecaster(경로 앞 고속도로 진입 예고) | 11/7 |
 
 ## 2. 모델 (`model`)
 
@@ -85,7 +90,7 @@ fun interface Clock { fun nowMs(): Long }
 
 `RestPolicy`: targetMin 120 · leadMin 10 · headsUpCutoffMin 2 · repeatMin 15 · maxRepeats 2 · restResetMin 15 · arrivalSoonMin 15 · estMs 3 500 · estShortMs 2 000.
 
-### 4.3 말해도 되는 때 — `QuietWindows` (구현은 11/7 gate)
+### 4.3 말해도 되는 때 — `QuietWindows` (구현: `gate.QuietGate`, 11/5)
 
 ```kotlin
 interface QuietWindows {
@@ -151,6 +156,7 @@ yielded(id): yields + 1, 다시 대기(다음엔 짧은 문장)
 | Spoken(key, repeat, yields, endMs, lateMs) | 끝까지 들려줌(tMillis = 시작) |
 | Yielded(key, count) · Dropped(key, reason) · Digested(key, reason) | 물러섬 · 버림(expired·state_ended·rested·cancel·tts_failed) · 정차 후 요약 |
 | RestTaken(restStartMs, segmentDrivingMs) · TripEnded(drivingMs) | 쉼 인정 · 주행 끝 |
+| StatusChanged(promiseId, from, to, note) | 약속 상태 변화(PromiseEngine) — 타일·요약·순응 계산 |
 
 `RestCompliance.compute(events, windowMin = 20)` → 운전 구간(쉼과 쉼 사이)마다 셈:
 
@@ -163,6 +169,8 @@ yielded(id): yields + 1, 다시 대기(다음엔 짧은 문장)
 | medianDeliveryLateMs | 본 알림 시각 → 들려준 시각 중앙값 | 전달 지연 |
 
 한계: 쉼은 P 15분 이상으로만 판단(주유·볼일과 구분 못 함). 분모가 0이면 비율은 null(0이 아님).
+
+**‘쉼’ 정의(결정, 11/4 Q032)**: 순응률의 ‘쉼’은 **P(또는 시동 끔) 15분 이상 정차** 그대로 둡니다 — 쉬기 약속의 목적은 ‘운전에서 15분 떨어지기’이고(운수 규정의 휴식도 장소를 묻지 않음), 주유·볼일 정차도 운전에서 떨어진 시간입니다. 휴게소·졸음쉼터로 좁히면 집 도착·주차장·카페 정차가 빠지고 장소 데이터가 필요해 더 틀립니다. 문서에는 ‘15분 이상 정차’로 이름을 정직하게 씁니다.
 
 ## 7. 리플레이 스키마 0.2 — `replay`
 
@@ -189,7 +197,7 @@ yielded(id): yields + 1, 다시 대기(다음엔 짧은 문장)
 
 ## 8. 시험 (`./gradlew :core:test`)
 
-스펙 41개(S01~S41) — `core/src/test/.../Specs.kt`. 같은 목록을 JUnit 5(`CoreSpecsTest`, 동적 시험)와 의존성 없는 점검 러너가 돌립니다.
+스펙 72개(S01~S41 `Specs.kt`, S42~S56 `EngineSpecs.kt`, S57~S72 `SessionSpecs.kt`) — 같은 목록을 JUnit 5(`CoreSpecsTest`, 동적 시험)와 의존성 없는 점검 러너가 돌립니다. S72는 `demo/trips/*.json`(시연 트립 4개, 앱 assets와 같은 파일)을 읽습니다.
 
 | 묶음 | 스펙 |
 |---|---|
@@ -199,6 +207,66 @@ yielded(id): yields + 1, 다시 대기(다음엔 짧은 문장)
 | 2시간 쉬기(전 주기·그때 값·쉼 인정·짧은 정차·예고 마감·도착 임박·이어 가기·신호 대기) | S25~S33 |
 | 지표(정의·엔드투엔드) | S34~S35 |
 | 리플레이·JSON·문장(ko/en) | S36~S41 |
+| 일몰 계산(서울·울산 7날짜 ±60초 · 극지방) | S42~S43 |
+| 약속 엔진(해 지기 전·고속도로·비·쉬기 상태·구역) | S44~S51 |
+| 리플레이 통합(계획서 예시 트립) · 출발 전 계획 · 시각 읽기 | S52~S56 |
+| 게이트(회전 앞·뒤·좌회전·끝낼 시간·내비 피하기·방향지시등·급제동·회전 통과·신호 대기 창·안전 즉시) | S57~S63 |
+| 세션(상태 기계·끝 조건·리플레이 통합·출발 전 계획·이어 가기·물러서기 배선) · 재생기 · 기록 JSON | S64~S71 |
+| 시연 트립 4개(병원→집 · 두 시간 쉬기 · 약속 구역 경계 · 고속도로·비) — 기대 발화 열·판정·요약 문장 | S72 |
+
+## 8.5 약속 엔진 (`engine` · `plan` · `scene`, 11/6 작업)
+
+```kotlin
+class PromiseEngine(promises: List<Promise>, scheduler: SpeechScheduler, ledger: LedgerSink, policy: EnginePolicy)
+    fun onNavi(e: NaviEvent)                 // Trip(ETA)·SpeedLimit·Tbt(road)·Arrived·RouteError
+    fun tick(w: World)                        // 10 Hz — 상태 판정 + 상태가 바뀔 때 말을 스케줄러에
+    fun endTrip(w: World): Map<String, PromiseStatus>   // 지킴/못 지킴으로 닫음
+    val statuses: Map<String, PromiseStatus>  // 정차 화면 타일
+object SolarCalc { fun at(epochMs, lat, lon, zone): SunTimes; fun forDate(date, lat, lon, zone): SunTimes; fun untilSunsetMs(…) }
+object PreTripPlanner { fun plan(Input(nowMs, originLat, originLon, plans, promises, zone, lang, departAtMs)): Plan }
+```
+
+| 약속 | 상태 규칙 | 말(한 번, 상태가 바뀔 때) |
+|---|---|---|
+| 해 지기 전 귀가(margin 30) | 도착 예정 ≤ 일몰−30분 ON_TRACK · 넘으면 AT_RISK(되돌릴 땐 5분 여유) · 해 진 뒤 주행 MISSED · 해 지기 전 도착 KEPT | AT_RISK: “이대로면 오후 5시 28분 도착, 해는 오후 5시 22분에 져요. 쉬지 말고 바로 가요.”(UNTIL_DEADLINE=일몰, 지나면 밤 문장으로) · 해 진 뒤: “해가 졌어요. 약속보다 늦었지만, 전조등 켜고 천천히 가요.” |
+| 고속도로 대신 | 제한속도 ≥ 100 또는 도로 이름(고속도로·고속국도·Expressway)이면 MISSED(그 주행 내내) | “고속도로에 들어섰어요. 약속과 달라요. 다음 나들목에서 내려갈지 정해요.” |
+| 비 오는 날 | 와이퍼 60초 이상 → 비 · 비 중 제한속도의 80%(젖은 노면 20% 감속) 넘으면 AT_RISK · 와이퍼 5분 멈추면 끝 | 비 시작: “비가 와요. 약속대로 평소보다 천천히…” · 30초 넘게 빠르면: “빗길에 70예요. 48 아래로 줄여요.” |
+| 2시간 쉬기 | 운전 ≥ 110분 AT_RISK · ≥ 120분 MISSED(말은 RestTracker) | — |
+| 약속 구역(중심·반경) | 밖 MISSED · 경계 300 m 안쪽에서 바깥으로 움직이면 AT_RISK · 안 ON_TRACK | 예고(UNTIL_DEADLINE 60초): “약속 구역 끝이 가까워요…” · 밖: “약속 구역 밖이에요. 안전한 곳에서 돌아가요.” · 돌아오면(INFO): “약속 구역으로 돌아왔어요.” |
+
+EnginePolicy 기본값: rainOnMs 60 000 · rainOffMs 300 000 · rainSpeedFactor 0.8 · rainDefaultLimitKph 60 · rainFastHoldMs 30 000 · highwaySpeedLimitKph 100 · zoneEdgeM 300 · darkHysteresisMs 300 000 · zone Asia/Seoul. 모든 말은 `speakWhen = 주행 중`(세워 둔 동안 미룸).
+
+PreTripPlanner 선택 규칙: 위반 0인 후보 중 가장 빠른 것 → 없으면 해 지기 전에 도착하는 것 → 없으면 가장 빠른 것. 문장: 선택 경로·소요 시간 / 해 지기 전(정상·직전·늦음 — 늦으면 출발 시한 또는 ‘다른 날·동승’) / 고속도로 유무 / 2시간 넘으면 쉬기 안내. 경로가 없으면 오류 문장.
+
+## 8.6 게이트 · 세션 · 재생기 (`gate` · `session` · `replay.ReplayPlayer`, 11/5 작업)
+
+```kotlin
+class QuietGate(policy: GatePolicy = GatePolicy()) : QuietWindows
+    fun update(now: Long, v: VehicleSnapshot?)   // 10 Hz — 속도·방향지시등·정차·급제동
+    fun onNavi(e: NaviEvent)                     // Tbt(거리·회전 종류) · Arrived/RouteError(경로 없음)
+    fun quiet(now: Long): Boolean                // 지금 침묵인가(회전 앞·뒤·방향지시등·급제동)
+    val timeToTurnMs: Long?                      // 다가오는 회전까지(없거나 지났으면 null)
+class TripSession(promises, speaker: Speaker, clock: Clock, lang, policy: SessionPolicy, externalLedger: LedgerSink, listener: Listener)
+    fun attach(location?, vehicle?, route?) · fun attachReplay(ReplayPlayer) · fun close()
+    fun onFix/onVehicle/onNavi · fun onNavPlayers/onFocus/onSpeechDone/onSpeechError   // 플랫폼 → 세션
+    fun tick(): Step · fun pumpReplay(ReplayPlayer): Step                            // 10 Hz
+    fun end(reason): Summary · fun plan(dest, route, departAtMs?): AutoCloseable
+    fun restState()/restoreRest(State) · val phase · statuses · drivingMs · plan · summary
+class ReplayPlayer(trip: ReplayTrip, real: Clock, speedup = trip.meta.speedup)   // clock(가상) · location/vehicle/route(원천) · pump(virtualNow) · finished
+object LedgerJson { fun encode(LedgerEvent): String; fun decode(line): LedgerEvent?; fun decodeAll(text): List<LedgerEvent> }
+```
+
+| 게이트 값(GatePolicy) | 기본 | 근거 |
+|---|---|---|
+| preMs · preLeftMs · postMs | 8 000 · 10 000 · 8 000 | 침묵구간검증 v0.1 선택값 P5(문헌 범위 + 시뮬레이션 강건성) |
+| minSpeedMps | 5.0 | 남은 시간 = 거리 ÷ max(속도, 5 m/s) — 정지·저속에서 회전이 ‘곧’이라고 보지 않게 |
+| turnReachedM · tbtAdvanceM | 20 · 60 | 회전 통과 판단: TBT 거리 ≤ 20 m 또는 새 TBT가 추정보다 60 m 이상 멀어짐 |
+| navPromptAtM · navPromptMs · navGuardPadMs | [300, 100] · 2 500 · 500 | 순정 내비 안내 지점·길이(가정 — G1-B에서 측정해 교체) |
+| stopWindowMs | 2 000 | 신호 대기 시작 2초(스케줄러가 마감 임박·두 번 끊긴 말에만 씀) |
+| hardBrakeMps2 · hardBrakeHoldMs | 3.0 · 2 000 | 급제동(0.3~1.5초 전 표본과 비교) 뒤 침묵 |
+| tbtStaleMs | 60 000 | TBT 소식이 끊기면 회전 예측을 접음 |
+
+세션 상태 기계: `PARKED`(세워 둠·모름) → 차가 움직이면(기어 R·N·D 또는 속도 > 0.5 m/s) `DRIVING` → `ENDED`. 끝 조건: 도착 소식 뒤 정차(P·시동 끔) · 시동 끔 · 도착 뒤 5분 · 도착 없이 30분 정차 · 수동. 끝나면 약속 판정을 닫고(engine.endTrip) 요약 문장(쉬기 요약 · “약속 n개 중 m개를 지켰어요…”)을 세워 둔 동안 INFO로 말합니다. 반복 예약(이미 한 말의 15분 뒤 반복)은 못 전한 말로 세지 않습니다.
 
 ## 9. 변경 기록
 
@@ -212,11 +280,17 @@ yielded(id): yields + 1, 다시 대기(다음엔 짧은 문장)
 | 결정 | Speak(…) | **`Step.Speak.estMs`** | 플랫폼 시간 초과 감시·시험 |
 | 내비 이벤트 | tMillis 없음 | **tMillis + RouteError** | 결정적 리플레이 · G1-B v0.7 CAUSE_SEARCH_ROUTE |
 | 시각 | `Clock.now()` | `Clock.nowMs()` | 단위 명시 |
+| 기록 | 7종 | **+ StatusChanged**(11/6 작업) | 약속 상태 변화 기록(기본값 있는 추가) |
+| 약속 엔진 | 11/6 예정 | **engine·plan·scene 구현**(11/4 밤에 당김) | 계약 변경 없이 추가 |
+| 게이트·세션 | 11/7·11/8 예정 | **gate·session·ReplayPlayer·LedgerJson 구현**(11/5 새벽에 당김, 스펙 S57~S72) | 계약 변경 없이 추가 |
+| 모듈 구성 | `:platform` · `:replay` 따로 | **`:app` 안 패키지(app.drivepromise.platform) + `core/replay/ReplayPlayer`** | 모듈 수를 줄여 빌드 실패 지점을 줄임(11/5 결정: 운영사 문의 없이 우리 기본값으로 진행) |
+| 주행 끝 판정 | 구역: 끝 시점 안이면 지킴 · 비: 끝 시점 과속 아니면 지킴 | **한 번이라도 구역 밖·빗길 과속이 있었으면 그 주행은 못 지킴**(고속도로와 같은 규칙) | 약속의 뜻(‘구역 안에서만’·‘빗길 조심’)에 맞게 — 시연 트립 검증 중 발견 |
+| 주행 끝 요약 | 남은 말 모두 요약 | **반복 예약(repeat > 0)은 버림**(`trip_end_repeat`) | 이미 들려준 말의 반복은 ‘못 전한 말’이 아님 |
 
 ## 10. 다음(이 계약 위에)
 
 | 날짜 | 할 일 |
 |---|---|
-| 11/6 | PromiseEngine(해 지기 전·고속도로 대신·비·2시간 쉬기·구역) · SolarCalc(NOAA, KASI ±2분) · PreTripPlanner |
-| 11/7 | gate: QuietWindows 구현(침묵구간검증 v0.1 값) · ConflictForecaster · PromiseComposer · Ledger 저장 |
-| 11/8 | :platform 어댑터(Pleos Vehicle·NaviHelper·TTS·재생 목록·포커스) · :app 상태 머신 · VoiceLoop 배선 |
+| 11/6 | ~~PromiseEngine · SolarCalc · PreTripPlanner~~ → 11/4 밤 완료(스펙 S42~S56) |
+| 11/7 | ~~gate: QuietWindows 구현~~ → 11/5 완료(S57~S63) · ConflictForecaster(경로 앞 고속도로 진입 예고) · NaviHelper 경로 ‘검색만’ API 확인(옵션별 후보) |
+| 11/8 | ~~어댑터·상태 머신·배선~~ → 11/5 `:app`(platform 패키지·DrivePromiseService·MainActivity) 구현 — 에뮬레이터 빌드·스모크로 확인 · 어댑터 콜백 모양(TBT 도로 이름·주의 지점·도착) 실측 보정 |

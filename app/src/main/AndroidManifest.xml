@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 위치(해 지기 전 귀가·약속 구역) — LocationManager(gps·fused). 리플레이는 위치 권한 없이도 동작 -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- AAOS 차량 속성(기어·속도·방향지시등·시동·와이퍼·전조등) -->
+    <uses-permission android:name="android.car.permission.CAR_POWERTRAIN" />
+    <uses-permission android:name="android.car.permission.CAR_SPEED" />
+    <uses-permission android:name="android.car.permission.CAR_EXTERIOR_LIGHTS" />
+    <!-- Pleos Vehicle SDK·NaviHelper (공식 샘플과 같은 권한) -->
+    <uses-permission android:name="pleos.car.permission.CAR_DOORS" />
+    <uses-permission android:name="pleos.car.permission.CAR_LIGHTS" />
+    <uses-permission android:name="pleos.car.permission.CAR_DRIVE" />
+    <uses-permission android:name="pleos.car.permission.CAR_SPEED" />
+    <uses-permission android:name="pleos.car.permission.CAR_INFO" />
+    <uses-permission android:name="pleos.car.permission.CAR_POWERTRAIN" />
+    <uses-permission android:name="pleos.car.permission.NAVI_ROUTE" />
+    <uses-permission android:name="pleos.car.permission.NAVI_ROUTE_SEARCH" />
+    <!-- Pleos TextToSpeech SDK(ON_DEVICE) — 초기화·리스너·발화 모두 이 권한 필요(G1-B v0.6 확인) -->
+    <uses-permission android:name="pleos.car.permission.TTS_SERVICE" />
+
+    <!-- Android 11+ 패키지 가시성: Pleos 음성 서비스(CaaS) -->
+    <queries>
+        <package android:name="ai.pleos.playground.caas" />
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
+
+    <application
+        android:allowBackup="false"
+        android:label="운전약속">
+
+        <uses-library android:name="android.car" android:required="false" />
+
+        <!-- 정차 화면만 있음(DO 선언 없음) — 주행 중에는 플랫폼이 가리고 음성(서비스)만 동작: 11/5 기본값 -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- 판정·발화 포그라운드 서비스: 10 Hz 세션 루프, 차량·내비·위치 어댑터, Pleos TTS, 기기 안 기록 -->
+        <service
+            android:name=".DrivePromiseService"
+            android:exported="true"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="driving promise voice companion" />
+        </service>
+    </application>
+</manifest>

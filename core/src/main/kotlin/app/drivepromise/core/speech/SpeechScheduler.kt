@@ -102,12 +102,12 @@ class SpeechScheduler(
         }
     }
 
-    /** 주행 끝(도착·긴 정차) — 남은 약속·정보 말은 요약으로, 안전 말은 버림 */
+    /** 주행 끝(도착·긴 정차) — 남은 약속·정보 말은 요약으로, 안전 말과 ‘이미 한 말의 반복 예약’은 버림(11/5: 반복은 못 전한 말이 아님) */
     fun endTrip(nowMs: Long) {
         for (p in ordered()) {
             queue.remove(p)
-            if (p.u.priority == Priority.SAFETY) {
-                ledger.accept(LedgerEvent.Dropped(nowMs, p.u.key, "trip_end"))
+            if (p.u.priority == Priority.SAFETY || p.repeat > 0) {
+                ledger.accept(LedgerEvent.Dropped(nowMs, p.u.key, if (p.repeat > 0) "trip_end_repeat" else "trip_end"))
             } else {
                 toDigest(nowMs, p.u, DigestReason.TRIP_END)
                 ledger.accept(LedgerEvent.Digested(nowMs, p.u.key, "trip_end"))
