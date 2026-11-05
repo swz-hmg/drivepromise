@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 108dp 적응형 전경: 가운데 72dp 안에 말풍선 + 체크 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 말풍선 -->
+    <path
+        android:fillColor="#F4F7F6"
+        android:pathData="M30,28 H78 A10,10 0 0 1 88,38 V62 A10,10 0 0 1 78,72 H52 L40,84 V72 H30 A10,10 0 0 1 20,62 V38 A10,10 0 0 1 30,28 Z" />
+    <!-- 체크 -->
+    <path
+        android:strokeColor="#1E8E5A"
+        android:strokeWidth="7"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000"
+        android:pathData="M38,50 L50,61 L72,39" />
+</vector>

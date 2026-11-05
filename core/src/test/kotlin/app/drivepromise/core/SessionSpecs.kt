@@ -30,6 +30,10 @@ import app.drivepromise.core.speech.Utterance
 import app.drivepromise.core.speech.Validity
 import app.drivepromise.core.speech.VoiceArbiter
 import app.drivepromise.core.speech.World
+import app.drivepromise.core.ui.Capability
+import app.drivepromise.core.ui.ModeResolver
+import app.drivepromise.core.ui.PresentationMode
+import app.drivepromise.core.ui.ScreenWhileDriving
 import java.io.File
 import java.time.ZoneId
 import java.time.ZonedDateTime
@@ -53,6 +57,9 @@ object SessionSpecs {
         "S70 기록 JSON — 모든 종류 왕복, 깨진 줄은 건너뜀" to ::s70,
         "S71 세션 — 내비에 물러섬·1.5초 뒤 짧게 다시 말하기가 세션 배선에서도 동작" to ::s71,
         "S72 시연 트립 4개(demo/trips) — 기대 발화 열과 주행 끝 판정·요약 문장" to ::s72,
+        "S73 화면 모드 — 결정표: 세워 둠은 PARKED, 주행 중엔 플랫폼 허용 ∧ 사용자 켜기일 때만 DRIVE_DO, 모르면 음성만" to ::s73,
+        "S74 화면 모드 — 전환 규칙: 내려가기(화면→음성)는 즉시, 올라가기(음성→화면)는 세워 둔 동안만 · 능력 판단(차단·가정)" to ::s74,
+        "S75 세션 — ‘다시 들려줘’: 마지막 문장을 INFO 로 다시 말함, 말한 것이 없으면 false, 침묵 구간에선 기다림" to ::s75,
     )
 }
 
@@ -490,3 +497,72 @@ private fun s72() {
         ok(ss.summary!!.reason == "arrived", "$name — 도착 뒤 정차로 끝: ${ss.summary!!.reason}")
     }
 }
+
+// ---------------------------------------------------------------- S73~S75 (11/5 Q036: DO 인정 가정 + 주행 화면)
+private fun s73() {
+    val Y = Capability.YES; val N = Capability.NO; val U = Capability.UNKNOWN
+    val ON = ScreenWhileDriving.ON; val VO = ScreenWhileDriving.VOICE_ONLY
+    // 화면모드전환설계 v0.1 결정표(기어 P / D·R·N × 플랫폼 DO × 사용자 설정)
+    eq(ModeResolver.resolve(false, Y, ON), PresentationMode.PARKED, "P · 허용 · 켜기 → 정차 화면")
+    eq(ModeResolver.resolve(false, N, VO), PresentationMode.PARKED, "P 는 설정과 상관없이 정차 화면")
+    eq(ModeResolver.resolve(true, Y, ON), PresentationMode.DRIVE_DO, "주행 · 허용 · 켜기 → 화면+음성")
+    eq(ModeResolver.resolve(true, Y, VO), PresentationMode.DRIVE_VOICE, "주행 · 허용 · 음성만 → 음성만")
+    eq(ModeResolver.resolve(true, N, ON), PresentationMode.DRIVE_VOICE, "주행 · 거부 · 켜기 → 음성만")
+    eq(ModeResolver.resolve(true, N, VO), PresentationMode.DRIVE_VOICE, "주행 · 거부 · 음성만 → 음성만")
+    eq(ModeResolver.resolve(true, U, ON), PresentationMode.DRIVE_VOICE, "주행 · 모름 → 음성만(안전한 기본값)")
+}
+
+private fun s74() {
+    val P = PresentationMode.PARKED; val DO = PresentationMode.DRIVE_DO; val V = PresentationMode.DRIVE_VOICE
+    eq(ModeResolver.next(P, DO, true), DO, "세워 둠에서 출발: 화면+음성으로")
+    eq(ModeResolver.next(P, V, true), V, "세워 둠에서 출발: 음성만으로")
+    eq(ModeResolver.next(DO, V, true), V, "주행 중 내려가기(차단·설정·UX 제한)는 즉시")
+    eq(ModeResolver.next(V, DO, true), V, "주행 중 올라가기는 하지 않음 — 다음 정차까지 음성만 유지")
+    eq(ModeResolver.next(V, P, false), P, "세우면 정차 화면")
+    eq(ModeResolver.next(DO, P, false), P, "세우면 정차 화면(화면에서도)")
+    eq(ModeResolver.next(V, DO, false), DO, "세워 둔 동안의 올라가기는 허용")
+    eq(ModeResolver.next(DO, DO, true), DO, "같으면 그대로")
+    // 능력 판단: 차단을 봤으면 NO 가 우선, 가정이 켜져 있으면 플랫폼 답과 상관없이 YES, 둘 다 아니면 플랫폼 답, 답이 없으면 UNKNOWN
+    eq(ModeResolver.capability(platformOptimized = false, assumeDo = true, blockedSeen = false), Capability.YES, "에뮬레이터(거부) + 가정 → YES")
+    eq(ModeResolver.capability(platformOptimized = false, assumeDo = true, blockedSeen = true), Capability.NO, "차단을 봤으면 가정보다 우선 NO")
+    eq(ModeResolver.capability(platformOptimized = true, assumeDo = false, blockedSeen = false), Capability.YES, "플랫폼 허용 → YES")
+    eq(ModeResolver.capability(platformOptimized = false, assumeDo = false, blockedSeen = false), Capability.NO, "플랫폼 거부 → NO")
+    eq(ModeResolver.capability(platformOptimized = null, assumeDo = false, blockedSeen = false), Capability.UNKNOWN, "답 없음 → UNKNOWN")
+    // 전체 흐름: 가정 ON 으로 출발 → 주행 중 차단 감지 → 즉시 음성만 → 세우면 정차 → 다음 출발도 음성만(차단 기억)
+    var cur = P
+    fun step(driving: Boolean, blocked: Boolean): PresentationMode {
+        val cap = ModeResolver.capability(false, true, blocked)
+        cur = ModeResolver.next(cur, ModeResolver.resolve(driving, cap, ScreenWhileDriving.ON), driving); return cur
+    }
+    eq(step(true, false), DO, "출발: 화면+음성")
+    eq(step(true, true), V, "차단 감지: 즉시 음성만")
+    eq(step(false, true), P, "정차")
+    eq(step(true, true), V, "다음 출발: 차단을 기억해 음성만")
+}
+
+private fun s75() {
+    val r = SessionRig(FOUR)
+    r.ses.onFix(seoul(T0))
+    r.ses.onVehicle(PARK.copy(tMillis = T0))
+    eq(r.ses.repeatLast(), false, "말한 것이 없으면 false")
+    r.ses.onVehicle(drive(T0 + 1_000))
+    r.ses.onNavi(NaviEvent.Trip(T0 + 1_000, T0 + 60 * MIN, 30_000))   // 17:50 도착 → 해 지기 전 귀가 위험 → dark.risk
+    r.run(10_000)
+    ok(r.keys().contains("dark.risk"), "출발 경고를 말함: ${r.keys()}")
+    val first = r.ses.lastSpoken!!.text
+    eq(r.ses.repeatLast(), true, "마지막 문장이 있으면 true")
+    eq(r.ses.repeatLast(), true, "연타해도 받음")
+    r.run(20_000)
+    val rep = r.log.filter { it.key == "repeat" }
+    eq(rep.size, 1, "연타해도 다시 말함은 1회(앞 요청 취소): ${r.keys()}")
+    eq(rep[0].text, first, "같은 문장을 다시 말함")
+    // 침묵 구간(방향지시등 켜짐)에서는 기다렸다가 꺼지면 말함
+    r.ses.onVehicle(drive(T0 + 20_100).copy(turnSignal = Turn.LEFT))
+    eq(r.ses.repeatLast(), true, "요청은 받음")
+    r.run(26_000)
+    eq(r.log.count { it.key == "repeat" }, 1, "방향지시등 켜진 동안은 말하지 않음")
+    r.ses.onVehicle(drive(T0 + 26_100))
+    r.run(40_000)
+    eq(r.log.count { it.key == "repeat" }, 2, "꺼지면 말함: ${r.keys()}")
+}
+

@@ -21,7 +21,7 @@ import app.drivepromise.core.source.Sink
  * S5-3·G1-B에서 확인한 모양(2026-11-04):
  *   onRouteStarted(RouteStartInfo(duration=60, distance=50, tollFare=0, name=…)) · onRouteStateInfo(RouteStateInfo(naviMode=ROUTE_GUIDING, routeOption=RECOMMENDED, …))
  *   onTBTInfo([TBTInfo(type=TURN_ARRIVE, distance=50.0, description=도착)]) · onDrivingInfo(DrivingInfo(destination=DrivingState(duration=60, distance=50, …)))
- *   onNavigationStatus(ROUTE_DRIVE) · onError(…) · onRouteCancelled
+ *   onNavigationStatus(ROUTE_DRIVE) · onError(…) · onRouteCancelled · onCurrentRoadSpeedLimit(0 …, 매초 — 11/5 실측)
  *
  * 출발 전 계획([planRoutes])은 requestRoute로 안내를 시작하고 첫 RouteStartInfo(거리·시간)를 추천 경로 후보 하나로 돌려줍니다 —
  * 옵션별 경로 ‘검색만’ 하는 API는 SDK 문서를 확인한 뒤(11/8) 붙입니다. 경로 실패(CAUSE_SEARCH_ROUTE 등)는 RouteError로.
@@ -33,15 +33,23 @@ class PleosRouteSource(private val ctx: Context, private val main: Handler) : Ro
     private var planDone: Sink<RoutePlans>? = null
     private var planTimeout: Runnable? = null
     private var lastSpeedLimit: Int? = null
+    private var inited = false
+    private val lastArgs = HashMap<String, String>()
 
+    /** 한 번 초기화한 뒤에는 세션이 바뀌어도 NaviHelper 를 다시 만들지 않고 받는 쪽(sink)만 바꿉니다 — [shutdown] 때만 해제 */
     override fun start(sink: Sink<NaviEvent>): AutoCloseable {
         this.sink = sink
-        init()
-        return AutoCloseable {
-            this.sink = null
-            try { navi?.release() } catch (_: Throwable) {}
-            navi = null
-        }
+        if (!inited) { inited = true; init() }
+        return AutoCloseable { if (this.sink === sink) this.sink = null }
+    }
+
+    /** 서비스가 끝날 때만 */
+    fun shutdown() {
+        sink = null
+        planDone?.let { finishPlan(RoutePlans(emptyMap(), "SHUTDOWN")) }
+        try { navi?.release() } catch (_: Throwable) {}
+        navi = null
+        inited = false
     }
 
     private fun init() {
@@ -50,7 +58,10 @@ class PleosRouteSource(private val ctx: Context, private val main: Handler) : Ro
             h.initialize()
             val l = Reflect.proxyOf(NaviHelperEventListener::class.java, "DPNaviListener") { m, args ->
                 val s = args?.joinToString(" ") { it.toString() } ?: ""
-                L.log("navi", "cb" to m, "args" to s.take(300))
+                if (lastArgs[m] != s) {   // 같은 값이 매초 오는 콜백(onCurrentRoadSpeedLimit 0 …)은 바뀔 때만 기록
+                    lastArgs[m] = s
+                    L.log("navi", "cb" to m, "args" to s.take(300))
+                }
                 main.post { onCallback(m, s) }
             }
             h.addListener(l)
@@ -77,6 +88,10 @@ class PleosRouteSource(private val ctx: Context, private val main: Handler) : Ro
                     emit(NaviEvent.Trip(now, now + dur * 1_000L, dist))
                     finishPlan(RoutePlans(mapOf(RouteOption.RECOMMENDED to RoutePlan(RouteOption.RECOMMENDED, dist, dur))))
                 }
+            }
+            m == "onCurrentRoadSpeedLimit" -> {   // 매초 현재 도로 제한속도(없으면 0) — 11/5 에뮬레이터에서 확인한 콜백 이름
+                val lim = Regex("-?\\d+").find(s)?.value?.toIntOrNull() ?: return
+                if (lim > 0 && lim != lastSpeedLimit) { lastSpeedLimit = lim; emit(NaviEvent.SpeedLimit(now, lim)) }
             }
             m == "onDrivingInfo" || m == "onRouteStateInfo" -> {
                 val dur = Reflect.num(s, "duration")?.toInt()

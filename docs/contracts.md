@@ -30,7 +30,8 @@ DrivePromise core contract v0.1 — frozen on 2026-11-05. 실차(Pleos·AAOS 어
 | `plan` | SolarCalc(NOAA 일출·일몰·시민 박명) · PreTripPlanner(경로 후보 선택·출발 전 카드 문장) | v0.1(11/6 작업) 구현·시험 |
 | `scene` | PromisePhrases(약속 문장 ko/en, 시각 읽기) · **SummaryPhrases**(약속 이름·상태·주행 끝 한 줄) | 구현·시험 |
 | `gate` | **QuietGate · GatePolicy** — QuietWindows 구현(침묵구간검증 v0.1 선택값 P5) | v0.1(11/7 작업을 11/5에 당김) 구현·시험 |
-| `session` | **TripSession · SessionPolicy** — 상태 기계(PARKED→DRIVING→ENDED)와 부품 배선(앱·리플레이·시험이 같은 코드) | v0.1(11/8 작업을 11/5에 당김) 구현·시험 |
+| `session` | **TripSession · SessionPolicy** — 상태 기계(PARKED→DRIVING→ENDED)와 부품 배선(앱·리플레이·시험이 같은 코드) · `lastSpoken` · `repeatLast()`(11/5 Q036) | v0.1(11/8 작업을 11/5에 당김) 구현·시험 |
+| `ui` | **PresentationMode · Capability · ScreenWhileDriving · ModeResolver** — 화면 모드(정차 화면 / 주행 화면+음성 / 주행 음성만) 결정표·전환 규칙·능력 판단(화면모드전환설계 v0.1, 11/5 Q036 구현) | 구현·시험 |
 | `forecast` | ConflictForecaster(경로 앞 고속도로 진입 예고) | 11/7 |
 
 ## 2. 모델 (`model`)
@@ -197,7 +198,7 @@ yielded(id): yields + 1, 다시 대기(다음엔 짧은 문장)
 
 ## 8. 시험 (`./gradlew :core:test`)
 
-스펙 72개(S01~S41 `Specs.kt`, S42~S56 `EngineSpecs.kt`, S57~S72 `SessionSpecs.kt`) — 같은 목록을 JUnit 5(`CoreSpecsTest`, 동적 시험)와 의존성 없는 점검 러너가 돌립니다. S72는 `demo/trips/*.json`(시연 트립 4개, 앱 assets와 같은 파일)을 읽습니다.
+스펙 75개(S01~S41 `Specs.kt`, S42~S56 `EngineSpecs.kt`, S57~S75 `SessionSpecs.kt`) — 같은 목록을 JUnit 5(`CoreSpecsTest`, 동적 시험)와 의존성 없는 점검 러너가 돌립니다. S72는 `demo/trips/*.json`(시연 트립 4개, 앱 assets와 같은 파일)을 읽습니다.
 
 | 묶음 | 스펙 |
 |---|---|
@@ -213,6 +214,7 @@ yielded(id): yields + 1, 다시 대기(다음엔 짧은 문장)
 | 게이트(회전 앞·뒤·좌회전·끝낼 시간·내비 피하기·방향지시등·급제동·회전 통과·신호 대기 창·안전 즉시) | S57~S63 |
 | 세션(상태 기계·끝 조건·리플레이 통합·출발 전 계획·이어 가기·물러서기 배선) · 재생기 · 기록 JSON | S64~S71 |
 | 시연 트립 4개(병원→집 · 두 시간 쉬기 · 약속 구역 경계 · 고속도로·비) — 기대 발화 열·판정·요약 문장 | S72 |
+| 화면 모드(결정표 7경우 · 전환 규칙 히스테리시스 · 능력 판단과 차단 기억) · ‘다시 들려줘’(1회·연타 1회·침묵 구간 대기) | S73~S75 |
 
 ## 8.5 약속 엔진 (`engine` · `plan` · `scene`, 11/6 작업)
 
@@ -268,6 +270,25 @@ object LedgerJson { fun encode(LedgerEvent): String; fun decode(line): LedgerEve
 
 세션 상태 기계: `PARKED`(세워 둠·모름) → 차가 움직이면(기어 R·N·D 또는 속도 > 0.5 m/s) `DRIVING` → `ENDED`. 끝 조건: 도착 소식 뒤 정차(P·시동 끔) · 시동 끔 · 도착 뒤 5분 · 도착 없이 30분 정차 · 수동. 끝나면 약속 판정을 닫고(engine.endTrip) 요약 문장(쉬기 요약 · “약속 n개 중 m개를 지켰어요…”)을 세워 둔 동안 INFO로 말합니다. 반복 예약(이미 한 말의 15분 뒤 반복)은 못 전한 말로 세지 않습니다.
 
+## 8.7 화면 모드 (`ui`, 11/5 Q036 — DO 인정 가정)
+
+```kotlin
+enum class PresentationMode { PARKED, DRIVE_DO, DRIVE_VOICE }   // 정차 화면 · 주행 화면+음성 · 주행 음성만
+enum class Capability { YES, NO, UNKNOWN }                       // 플랫폼이 주행 중 화면을 허용하는가
+enum class ScreenWhileDriving { ON, VOICE_ONLY }                 // 사용자 설정(기본 ON)
+object ModeResolver {
+    fun resolve(driving: Boolean, cap: Capability, user: ScreenWhileDriving): PresentationMode
+        // !driving → PARKED · (cap YES ∧ user ON) → DRIVE_DO · 그 밖(NO·UNKNOWN·VOICE_ONLY) → DRIVE_VOICE
+    fun next(current: PresentationMode, resolved: PresentationMode, driving: Boolean): PresentationMode
+        // 내려가기(DRIVE_DO→DRIVE_VOICE)는 즉시 · 올라가기(DRIVE_VOICE→DRIVE_DO)는 세워 둔 동안(PARKED 에서 출발)만 · PARKED ↔ 주행은 언제나
+    fun capability(platformOptimized: Boolean?, assumeDo: Boolean, blockedSeen: Boolean): Capability
+        // 차단을 봤으면 NO > (플랫폼 YES ∨ 가정) → YES > 플랫폼 NO → NO > UNKNOWN
+}
+class TripSession { val lastSpoken: Step.Speak?; val lastSpokenAtMs: Long?; fun repeatLast(): Boolean /* INFO ‘repeat’, 게이트·물러서기 적용, 연타는 앞 요청 취소 */ }
+```
+
+앱 배선(계약 밖, `app/`): `ScreenModeController`(입력: 세션 단계·`CarPackageManager.isActivityDistractionOptimized`·DO 인정 가정 설정·차단 감지·사용자 설정·디버그 강제) → `mode` · `launchSeq`. 정차 화면(`MainActivity`, DO 선언 없음)이 `launchSeq` 가 늘 때 주행 화면(`DriveActivity`, `distractionOptimized=true`)을 한 번 띄우고, 주행 화면은 모드가 `DRIVE_DO` 가 아니면 스스로 닫힘. 주행 화면이 UX 제한(`requiresDistractionOptimization`) 중에 가려지면(onStop) 차단으로 보고 서비스 수명 동안 음성만. 주행 화면 내용: 약속 5개 상태(색) · 마지막 문장(60초, 플랫폼 허용 길이 `maxRestrictedStringLength` 안) · 연속 운전 시간 · 버튼 하나(‘다시 들려줘’ → `repeatLast`). 스크롤·목록·키보드·설정 없음.
+
 ## 9. 변경 기록
 
 | 대상 | 계획서 초안(v0.2)·발화 정책 v0.4 | 코어 계약 v0.1 | 까닭 |
@@ -286,6 +307,10 @@ object LedgerJson { fun encode(LedgerEvent): String; fun decode(line): LedgerEve
 | 모듈 구성 | `:platform` · `:replay` 따로 | **`:app` 안 패키지(app.drivepromise.platform) + `core/replay/ReplayPlayer`** | 모듈 수를 줄여 빌드 실패 지점을 줄임(11/5 결정: 운영사 문의 없이 우리 기본값으로 진행) |
 | 주행 끝 판정 | 구역: 끝 시점 안이면 지킴 · 비: 끝 시점 과속 아니면 지킴 | **한 번이라도 구역 밖·빗길 과속이 있었으면 그 주행은 못 지킴**(고속도로와 같은 규칙) | 약속의 뜻(‘구역 안에서만’·‘빗길 조심’)에 맞게 — 시연 트립 검증 중 발견 |
 | 주행 끝 요약 | 남은 말 모두 요약 | **반복 예약(repeat > 0)은 버림**(`trip_end_repeat`) | 이미 들려준 말의 반복은 ‘못 전한 말’이 아님 |
+| 차량 신호 원천(앱) | AAOS CarPropertyManager 7속성 + Vehicle SDK 방향지시등 보조 | **방향지시등·와이퍼·전조등은 Pleos Vehicle SDK 2.3.2(registerTurnSignalState·registerWiperState·registerLow/HighBeamLightState)를 주 원천으로, AAOS는 되는 차종에서 보조** | 11/5 에뮬레이터 실측: CarPropertyManager는 GEAR_SELECTION·PERF_VEHICLE_SPEED만 등록되고 나머지 5개는 "propertyId is not in carPropertyConfig list"(VHAL에 없음). 시동 상태는 원천 없음 → null(세션은 기어 P·도착·시간으로 끝냄). 계약(VehicleSnapshot)은 그대로 |
+| 제한속도(앱) | onDrivingInfo/onRouteStateInfo의 speedLimit 필드 | **+ `onCurrentRoadSpeedLimit`(매초, 0=없음)** → `NaviEvent.SpeedLimit`(0보다 크고 바뀔 때만) | 11/5 실측에서 확인한 콜백 이름. 계약 변경 없음 |
+| 화면 모드(11/5 Q036) | 주행 중 화면 없음(음성만, DO 선언 안 함 — 11/5 기본값) | **DO 인정을 가정해 주행 화면(DriveActivity, DO 선언) 추가 — `ui.ModeResolver`(결정표·히스테리시스·능력 판단)·`TripSession.repeatLast()`·스펙 S73~S75** | 사용자 요청(Q036). 가정이 틀린 환경에서는 차단 감지로 음성만(바닥 모드) — 판단·발화 계약은 그대로 |
+| 어댑터 수명(앱) | 세션마다 start/close | **차량·내비 어댑터는 서비스 수명 동안 한 번만 초기화, 세션은 받는 쪽만 교체**(`shutdown()`은 서비스 종료 때) | 실측: startReal이 3회 불려(생성·권한 결과·리플레이 끝) Car·Vehicle SDK·NaviHelper가 매번 다시 초기화됨 — 낭비·중복 로그 |
 
 ## 10. 다음(이 계약 위에)
 
@@ -293,4 +318,4 @@ object LedgerJson { fun encode(LedgerEvent): String; fun decode(line): LedgerEve
 |---|---|
 | 11/6 | ~~PromiseEngine · SolarCalc · PreTripPlanner~~ → 11/4 밤 완료(스펙 S42~S56) |
 | 11/7 | ~~gate: QuietWindows 구현~~ → 11/5 완료(S57~S63) · ConflictForecaster(경로 앞 고속도로 진입 예고) · NaviHelper 경로 ‘검색만’ API 확인(옵션별 후보) |
-| 11/8 | ~~어댑터·상태 머신·배선~~ → 11/5 `:app`(platform 패키지·DrivePromiseService·MainActivity) 구현 — 에뮬레이터 빌드·스모크로 확인 · 어댑터 콜백 모양(TBT 도로 이름·주의 지점·도착) 실측 보정 |
+| 11/8 | ~~어댑터·상태 머신·배선~~ → 11/5 `:app`(platform 패키지·DrivePromiseService·MainActivity) 구현 — 11/5 10:48·10:56 에뮬레이터 빌드·스모크 통과(병원→집: dark.risk 0초 → 요약 50초, TTS onDone 2/2) · 11/5 v0.2: 차량 신호를 Vehicle SDK로, 제한속도 콜백, 어댑터 1회 초기화 · 11/5 v0.3(Q036): DO 인정 가정 + 주행 화면(DriveActivity)·화면 모드·‘다시 들려줘’ · 남은 것: 와이퍼·전조등 열거형 이름 실측 뒤 표 좁힘, TBT 도로 이름·주의 지점·도착 콜백 보정, 주행 화면이 에뮬레이터 기어 D에서 가려지는지(차단 감지) 실측 |

@@ -137,6 +137,12 @@ class TripSession(
     var remainM: Int? = null
         private set
 
+    /** 마지막으로 말한 문장(주행 화면 표시·‘다시 들려줘’) */
+    var lastSpoken: Step.Speak? = null
+        private set
+    var lastSpokenAtMs: Long? = null
+        private set
+
     private var arrivedAt: Long? = null
     private var parkedSince: Long? = null
     private var lastStatuses: Map<String, PromiseStatus> = emptyMap()
@@ -208,7 +214,7 @@ class TripSession(
             checkPhase(now, v)
         }
         val step = voice.tick(w)
-        if (step is Step.Speak) listener.onSpeak(step, now)
+        if (step is Step.Speak) { lastSpoken = step; lastSpokenAtMs = now; listener.onSpeak(step, now) }
         val st = engine.statuses
         if (st != lastStatuses) {
             lastStatuses = st
@@ -298,6 +304,19 @@ class TripSession(
     }
 
     // ---------------------------------------------------------------- 이어 가기
+    /**
+     * ‘다시 들려줘’ — 마지막 문장을 INFO 로 다시 예약합니다(게이트·물러서기는 그대로 적용). 말한 것이 없으면 false.
+     * 같은 요청이 겹치면 앞의 것을 취소합니다.
+     */
+    fun repeatLast(): Boolean {
+        val last = lastSpoken ?: return false
+        val now = clock.nowMs()
+        val text = last.text
+        scheduler.cancel("repeat", now, "replaced")
+        scheduler.submit(Utterance("repeat", Priority.INFO, estMs = (350L * text.length).coerceIn(1_000L, 4_000L), render = { text }), now)
+        return true
+    }
+
     fun restState(): RestTracker.State = rest.state()
     fun restoreRest(s: RestTracker.State) = rest.restore(s, clock.nowMs())
 

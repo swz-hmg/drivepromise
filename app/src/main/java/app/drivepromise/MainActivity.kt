@@ -27,10 +27,13 @@ import app.drivepromise.core.model.PromiseStatus
 import app.drivepromise.core.scene.SummaryPhrases
 import app.drivepromise.core.session.TripSession
 import app.drivepromise.core.speech.Lang
+import app.drivepromise.core.ui.PresentationMode
+import app.drivepromise.core.ui.ScreenWhileDriving
 
 /**
- * 정차 화면(DO 선언 없음) — 세워 둔 동안만 보는 화면: 약속 타일 4개, 출발 전 계획 카드, 주행 끝 요약, 리플레이 버튼, 기록.
- * 주행 중에는 플랫폼이 이 화면을 가리고(G1-B B1) 서비스가 음성으로만 동작합니다. 글자는 크게(시니어), 바탕은 어둡게(차량 화면).
+ * 정차 화면(DO 선언 없음) — 세워 둔 동안 보는 화면: 약속 타일 5개, 출발 전 계획 카드, 주행 끝 요약, 설정(주행 중 화면·DO 가정·한/영),
+ * 리플레이 버튼, 기록. 주행이 시작되고 모드가 DRIVE_DO 가 되면 주행 화면(DriveActivity, DO 선언)을 한 번 띄웁니다(11/5 Q036).
+ * 모드가 DRIVE_VOICE 면 아무것도 띄우지 않고(플랫폼이 이 화면을 가림) 서비스가 음성으로만 동작합니다. 글자는 크게(시니어), 바탕은 어둡게.
  */
 class MainActivity : Activity() {
     private val main = Handler(Looper.getMainLooper())
@@ -42,6 +45,10 @@ class MainActivity : Activity() {
     private lateinit var logView: TextView
     private lateinit var replayRow: LinearLayout
     private var replayButtonsBuilt = false
+    private var launchedSeq = 0
+    private var resumed = false
+    private lateinit var screenBtn: Button
+    private lateinit var assumeBtn: Button
     private val refresh = object : Runnable {
         override fun run() {
             render()
@@ -72,6 +79,16 @@ class MainActivity : Activity() {
         super.onStart()
         bindService(Intent(this, DrivePromiseService::class.java), conn, Context.BIND_AUTO_CREATE)
         main.post(refresh)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        resumed = true
+    }
+
+    override fun onPause() {
+        super.onPause()
+        resumed = false
     }
 
     override fun onStop() {
@@ -105,6 +122,13 @@ class MainActivity : Activity() {
             button("한/영") { svc?.let { it.setLang(if (it.prefs.lang == Lang.KO) Lang.EN else Lang.KO) } },
             button("실차 모드로") { svc?.startReal() },
         ))
+        screenBtn = button("주행 중 화면: 켜기") { svc?.let { it.setScreenWhileDriving(if (it.prefs.screenWhileDriving == ScreenWhileDriving.ON) ScreenWhileDriving.VOICE_ONLY else ScreenWhileDriving.ON) } }
+        assumeBtn = button("DO 인정 가정: 켬") { svc?.let { it.setAssumeDo(!it.prefs.assumeDo) } }
+        root.addView(row(
+            screenBtn,
+            assumeBtn,
+            button("주행 화면 미리보기") { startActivity(DriveActivity.intent(this, preview = true)) },
+        ))
         replayRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         root.addView(HorizontalScrollView(this).apply { addView(replayRow); isHorizontalScrollBarEnabled = false })
         root.addView(text("기록", 18f, color = SUB))
@@ -128,7 +152,24 @@ class MainActivity : Activity() {
             TripSession.Phase.ENDED -> if (lang == Lang.KO) "주행 끝" else "trip ended"
         }
         val min = ses.drivingMs / 60_000
-        subtitle.text = "$phase · ${if (lang == Lang.KO) "연속 운전 ${min}분" else "$min min driving"} · $mode"
+        val vs = s.vehicleSources()
+        val vsText = if (lang == Lang.KO) "차량 신호 ${vs.size}개" else "${vs.size} vehicle signals"
+        val sm = s.screen.mode
+        val smText = when (sm) {
+            PresentationMode.PARKED -> if (lang == Lang.KO) "정차 화면" else "parked screen"
+            PresentationMode.DRIVE_DO -> if (lang == Lang.KO) "주행 화면+음성" else "drive screen + voice"
+            PresentationMode.DRIVE_VOICE -> if (lang == Lang.KO) "주행 음성만" else "drive voice only"
+        }
+        subtitle.text = "$phase · ${if (lang == Lang.KO) "연속 운전 ${min}분" else "$min min driving"} · $mode · $vsText · $smText"
+        screenBtn.text = if (s.prefs.screenWhileDriving == ScreenWhileDriving.ON) (if (lang == Lang.KO) "주행 중 화면: 켜기" else "Screen while driving: on") else (if (lang == Lang.KO) "주행 중 화면: 음성만" else "Screen while driving: voice only")
+        assumeBtn.text = (if (lang == Lang.KO) "DO 인정 가정: " else "Assume DO: ") + (if (s.prefs.assumeDo) (if (lang == Lang.KO) "켬" else "on") else (if (lang == Lang.KO) "끔" else "off"))
+        // 주행 시작 + 화면 허용 → 주행 화면을 한 번만 띄움(이 화면이 앞에 있을 때만 — 뒤에 있으면 플랫폼 규칙상 띄우지 않음)
+        val seq = s.screen.launchSeq
+        if (seq != launchedSeq && sm == PresentationMode.DRIVE_DO) {
+            launchedSeq = seq
+            if (resumed) { L.log("screen", "s" to "launch_drive", "seq" to seq); startActivity(DriveActivity.intent(this)) }
+            else L.log("screen", "s" to "launch_skipped_background", "seq" to seq)
+        }
         if (!replayButtonsBuilt) {
             replayButtonsBuilt = true
             for (n in s.replayNames()) replayRow.addView(button("▶ $n") { s.startReplay(n) })
@@ -153,7 +194,8 @@ class MainActivity : Activity() {
             val extra = if (sm.digestLines.isEmpty()) "" else "\n" + (if (lang == Lang.KO) "못 전한 말: " else "Not delivered: ") + sm.digestLines.joinToString(" / ")
             summaryCard.text = (sm.lines.ifEmpty { listOf(if (lang == Lang.KO) "주행이 끝났어요." else "Trip ended.") }).joinToString("\n") + extra
         }
-        logView.text = L.recent(10).joinToString("\n") { it.replace(Regex(" t=\\d+"), "").take(160) }
+        logView.text = L.recent(60).filter { l -> SHOW.any { l.startsWith("event=$it ") } }.takeLast(10)
+            .joinToString("\n") { it.replace(Regex(" t=\\d+"), "").take(160) }
     }
 
     // ---------------------------------------------------------------- 작은 도우미
@@ -217,6 +259,8 @@ class MainActivity : Activity() {
     }
 
     companion object {
+        /** 기록 칸에 보여 줄 이벤트(어댑터의 매초 콜백은 뺌) */
+        private val SHOW = listOf("speak", "phase", "status", "plan", "summary", "replay_start", "session", "cmd", "tts_init", "tts_init_error", "vsdk", "prop_reg", "location", "perm", "mode", "screen", "do_check", "uxr", "repeat")
         private val BG = Color.parseColor("#0F1418")
         private val CARD = Color.parseColor("#1C262E")
         private val SUB = Color.parseColor("#B0BEC5")

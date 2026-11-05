@@ -8,6 +8,7 @@ import app.drivepromise.core.ledger.LedgerSink
 import app.drivepromise.core.model.Promise
 import app.drivepromise.core.rest.RestTracker
 import app.drivepromise.core.speech.Lang
+import app.drivepromise.core.ui.ScreenWhileDriving
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -42,6 +43,16 @@ class Prefs(ctx: Context) {
     var lang: Lang
         get() = if (sp.getString("lang", "ko") == "en") Lang.EN else Lang.KO
         set(v) { sp.edit().putString("lang", if (v == Lang.EN) "en" else "ko").apply() }
+
+    /** 주행 중 화면 — 기본 ON(가능하면 화면). 화면모드전환설계 v0.1: 설정은 화면을 줄이는 쪽으로만 작동 */
+    var screenWhileDriving: ScreenWhileDriving
+        get() = if (sp.getString("screen.driving", "on") == "voice") ScreenWhileDriving.VOICE_ONLY else ScreenWhileDriving.ON
+        set(v) { sp.edit().putString("screen.driving", if (v == ScreenWhileDriving.VOICE_ONLY) "voice" else "on").apply() }
+
+    /** DO(주행 중 허용 화면) 인정 가정 — 11/5 Q036 기본 켬. 끄면 플랫폼 답(isActivityDistractionOptimized)만 믿음 */
+    var assumeDo: Boolean
+        get() = sp.getBoolean("screen.assumeDo", true)
+        set(v) { sp.edit().putBoolean("screen.assumeDo", v).apply() }
 
     fun restState(): RestTracker.State? {
         if (!sp.contains("rest.drivingMs")) return null
