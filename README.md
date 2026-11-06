@@ -5,11 +5,11 @@
 
 | 항목 | 내용 |
 |---|---|
-| 앱 이름 | 운전약속 (DrivePromise) · 패키지 `app.drivepromise` · 버전 1.2.1 (versionCode 5) |
+| 앱 이름 | 운전약속 (DrivePromise) · 패키지 `app.drivepromise` · 버전 1.2.2 (versionCode 6) |
 | 한 줄 소개 | 해 지기 전 귀가 · 고속도로 대신 일반도로 · 비 오는 날 조심 · 2시간마다 쉬기 · 약속 구역 — 다섯 가지 약속을 차량 신호로 판단하고, 내비 안내·방향지시등 같은 ‘침묵 구간’을 피해 한두 문장으로 말합니다 |
 | APK | [`apk/DrivePromiseTeam_DrivePromise_release.apk`](apk/) (release 빌드, 전용 키 서명) · 체크섬 `apk/SHA256SUMS.txt` |
 | 테스트 환경 | Pleos Connect 에뮬레이터(Android 14 · API 34, 2560×1440) — 아래 3장 |
-| 시연 영상 | [`docs/demo/`](docs/demo/) (약 3분, 에뮬레이터 화면 + Pleos TTS 음성 녹화) |
+| 시연 영상 | [`docs/demo/drivepromise_demo.mp4`](docs/demo/) (약 3분 30초 · 에뮬레이터 실제 녹화: 출발 전 계획 · 시연 주행 4개 · 질문과 대답 · 음성 명령) |
 | 문서 | 운영 매뉴얼 [`docs/MANUAL.md`](docs/MANUAL.md) · 설계 계약 [`docs/contracts.md`](docs/contracts.md) |
 
 ---
@@ -35,7 +35,7 @@
 | 말 | 하는 일 | 앱의 대답(예) |
 |---|---|---|
 | “다시 들려줘” · “뭐라고?” | 마지막 문장을 다시 | (마지막 문장) |
-| “약속 알려 줘” | 지금 약속 상태 — 위험한 약속만 이름으로 | “해 지기 전 귀가가 위험해요. 나머지는 지키는 중이에요.” |
+| “약속 알려 줘” | 지금 약속 상태 — 위험한 약속만 이름으로, 아직 판단할 수 없는 약속은 따로(1.2.2) | “해 지기 전 귀가가 위험해요. 나머지는 지키는 중이에요.” · 목적지 전: “약속 4개는 지키는 중이에요. 해 지기 전 귀가는 아직 몰라요.” |
 | “조용히 해” | 10분 동안 안내성 말(INFO)만 미룸 — 약속 경고는 그대로 | “네, 10분 동안 조용히 할게요.” |
 | (쉬기 질문에) “응” · “쉴게” | 쉬기 의향을 기록 | “좋아요. 다음 쉴 곳에서 쉬어요.” |
 | (쉬기 질문에) “아니” · “괜찮아” | 기록만 하고 더 묻지 않음 | “알겠어요. 조심히 가요.” |
@@ -134,7 +134,7 @@ adb logcat -d -s DP | grep -E "stt_init|stt_listen|stt_result|voice_cmd"
 
 1. 정차 화면에서 **실차 모드로**를 누르거나 `cmd stop_replay`.
 2. 에뮬레이터 안의 Virtual Console을 Mac 브라우저로 엽니다: `adb forward tcp:8088 tcp:8088` 후 `http://127.0.0.1:8088/` (Cold Boot·adb 재시작 뒤에는 다시 forward).
-3. 기어 D·속도·방향지시등을 바꾸면 앱이 같은 판단을 실시간으로 합니다. 와이퍼(‘비 오는 날 조심’의 신호)는 Pleos Vehicle SDK로 받습니다. 1.2.1에서 공식 문서의 모양(`registerWiperState(WindowArea(FRONT_WINDSHIELD), 리스너)`, 권한 `CAR_WINDOWS`)으로 등록하도록 고쳤고, 에뮬레이터 확인은 진행 중입니다(기록 `vsdk_area`·`vsdk_reg domain=Wiper`).
+3. 기어 D·속도·방향지시등을 바꾸면 앱이 같은 판단을 실시간으로 합니다. 와이퍼(‘비 오는 날 조심’의 신호)는 Pleos Vehicle SDK로 받습니다. 공식 문서의 모양(`registerWiperState(WindowArea(FRONT_WINDSHIELD), 리스너)`, 권한 `CAR_WINDOWS`)으로 등록합니다 — 11/6 에뮬레이터에서 등록과 첫 값(`OFF`)을 확인했습니다(기록 `vsdk_area`·`vsdk_reg domain=Wiper argc=2`·`vsdk domain=Wiper`).
 
 ### 2-6. 소스에서 빌드
 
@@ -194,7 +194,7 @@ adb logcat -d -s DP | grep -E "stt_init|stt_listen|stt_result|voice_cmd"
 ./gradlew :core:test
 ```
 
-결과는 `core/build/test-results/test/*.xml`(S01~S82)에 남습니다.
+결과는 `core/build/test-results/test/*.xml`(S01~S83, 83개)에 남습니다.
 
 에뮬레이터 스모크(설치 → 위치 시험 → 음성 명령 시험 → 리플레이 4개 → 발화 열·요약·주행 화면·질문 뒤 듣기 판정)는 개발 PC의 실행 스크립트로 돌립니다(저장소 밖).
 

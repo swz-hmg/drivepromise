@@ -71,6 +71,7 @@ object SessionSpecs {
         "S80 듣는 동안 — 새 말을 시작하지 않고(마이크가 우리 목소리를 듣지 않게) 끝나면 이어 말함 · 같은 질문에서 ‘다시’ 뒤 다시 듣기는 한 번만" to ::s80,
         "S81 질문 판정 — 도착 15분 안 본 알림(‘곧 도착이에요…’)은 질문이 아니라 듣지 않음 · 질문형일 때만 듣기 요청 · 주행 끝 순간 말하던 문장은 반복을 예약하지 않음(11/6 실행)" to ::s81,
         "S82 리플레이 멈춤 — 듣는 동안 가상 시계가 섬 · 시연 트립 ‘두 시간 쉬기’를 STT 켜고 60배속으로: 질문 → 5초 듣는 동안 트립 멈춤 → ‘응’ → 대답 → 도착 → 요약 2줄 말한 뒤에야 끝(11/6 실행)" to ::s82,
+        "S83 ‘약속 알려 줘’ 대답 — 판단 전(UNKNOWN)인 약속이 있으면 ‘모두’라고 하지 않고 이름(하나)·개수(둘 이상)로 따로 말함, 위험한 약속과 섞여도 개수가 맞음(11/6 실행: 약속 5개 화면에 ‘4개 모두’)" to ::s83,
     )
 }
 
@@ -665,7 +666,7 @@ private fun s79() {
     r.run(8_000)
     ok(r.log.last().key == "voice.status", "상태 대답: ${r.keys()}")
     val st = r.log.last().text
-    ok(st.startsWith("약속 ") && st.endsWith("지키는 중이에요."), "위험 없으면 개수만: $st")
+    eq(st, "약속 3개는 지키는 중이에요. 해 지기 전 귀가는 아직 몰라요.", "위험 없으면 개수만 — 목적지가 없어 판단 전인 약속은 따로(‘모두’라고 하지 않음, 1.2.2)")
     eq(r.ses.onVoice("다시", ListenTrigger.BUTTON), VoiceIntent.REPEAT, "다시")
     r.run(14_000)
     eq(r.log.last().key, "repeat", "다시 → 마지막 문장")
@@ -825,4 +826,30 @@ private fun s82() {
     val vc = ses.memory.events.filterIsInstance<LedgerEvent.VoiceCommand>()
     eq(vc.map { Triple(it.trigger, it.intent, it.question) }, listOf(Triple("QUESTION", "YES", "rest.main")), "기록: 뜻과 질문만")
     ok(p2.heldMs in 4_900L..5_200L, "멈춘 시간 ≈ 5초: ${p2.heldMs}")
+}
+
+// ---------------------------------------------------------------- S83 (11/6 Q043: run_1106_135232 — ‘약속 4개 모두 지키는 중이에요.’)
+private fun s83() {
+    val five = listOf(Promise.HomeBeforeDark(30), Promise.AvoidHighway(), Promise.RainCare(), Promise.RestEvery(120), Promise.StayInZone(SEOUL_LAT, SEOUL_LON, 5_000))
+    val on = PromiseStatus.ON_TRACK
+    val all = mapOf("dark" to on, "highway" to on, "rain" to on, "rest" to on, "zone" to on)
+    eq(VoicePhrases.status(Lang.KO, five, all), "약속 5개 모두 지키는 중이에요.", "모두 판단됨 → ‘모두’")
+    // 11/6 실행 그대로: 세워 둔 채 목적지 없음 → 해 지기 전 귀가만 UNKNOWN
+    val noDest = all - "dark"
+    val ko1 = VoicePhrases.status(Lang.KO, five, noDest)
+    eq(ko1, "약속 4개는 지키는 중이에요. 해 지기 전 귀가는 아직 몰라요.", "판단 전 하나는 이름으로")
+    ok(!ko1.contains("모두"), "‘모두’라고 하지 않음: $ko1")
+    eq(VoicePhrases.status(Lang.EN, five, noDest), "4 promises are on track; home before dark is not known yet.", "영어도 같은 구조")
+    eq(VoicePhrases.status(Lang.KO, five, noDest + ("dark" to PromiseStatus.UNKNOWN)), ko1, "UNKNOWN을 직접 넣어도 같음")
+    // 받침 있는 이름(조사 ‘은’)
+    eq(VoicePhrases.status(Lang.KO, five, all - "zone"), "약속 4개는 지키는 중이에요. 약속 구역은 아직 몰라요.", "받침 → ‘은’")
+    // 둘 이상 판단 전 → 개수
+    eq(VoicePhrases.status(Lang.KO, five, all - "dark" - "zone"), "약속 3개는 지키는 중이에요. 2개는 아직 몰라요.", "판단 전 둘 이상은 개수로")
+    // 위험 + 판단 전: ‘나머지’가 판단 전 약속까지 지킨다고 말하지 않게 개수로
+    val mix = noDest + ("zone" to PromiseStatus.AT_RISK)
+    eq(VoicePhrases.status(Lang.KO, five, mix), "약속 구역이 위험해요. 3개는 지키는 중이에요.", "위험 하나 + 판단 전 하나")
+    eq(VoicePhrases.status(Lang.KO, five, all + ("zone" to PromiseStatus.AT_RISK)), "약속 구역이 위험해요. 나머지는 지키는 중이에요.", "판단 전이 없으면 ‘나머지’ 그대로")
+    // 해당 없음(NOT_APPLICABLE)은 판단 전으로 세지 않음
+    eq(VoicePhrases.status(Lang.KO, five, all + ("highway" to PromiseStatus.NOT_APPLICABLE)), "약속 4개 모두 지키는 중이에요.", "해당 없음은 빼고 ‘모두’")
+    eq(VoicePhrases.status(Lang.KO, five, emptyMap()), "아직 판단할 신호가 없어요.", "신호 없음은 그대로")
 }

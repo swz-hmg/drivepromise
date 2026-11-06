@@ -1,6 +1,6 @@
 # 운전약속(DrivePromise) 기동·재기동·운영 매뉴얼
 
-대상: 심사·시연·개발에서 Pleos Connect 에뮬레이터로 앱을 실행하는 사람. 버전 1.2.1(versionCode 5) 기준 — 위치는 Pleos FusedLocation SDK(안 되면 LocationManager 자동 전환), 음성 명령은 Pleos SpeechToText SDK(ON_DEVICE, 안 되면 버튼만).
+대상: 심사·시연·개발에서 Pleos Connect 에뮬레이터로 앱을 실행하는 사람. 버전 1.2.2(versionCode 6) 기준 — 위치는 Pleos FusedLocation SDK(안 되면 LocationManager 자동 전환), 음성 명령은 Pleos SpeechToText SDK(ON_DEVICE, 안 되면 버튼만).
 
 ## 0. 한눈에
 
@@ -131,7 +131,7 @@ adb forward tcp:8088 tcp:8088 && open http://127.0.0.1:8088/
 
 ### 3-4. 실차 모드(Virtual Console)
 
-`실차 모드로` → Virtual Console에서 기어 D·속도·방향지시등·와이퍼를 바꿉니다. 판단은 리플레이와 같은 코어가 합니다. 와이퍼는 Pleos Vehicle SDK `registerWiperState(WindowArea, WiperStateListener)`로 받습니다 — 1.2.1에서 영역 `WindowArea(FRONT_WINDSHIELD)`를 만들어 등록하고 권한 `pleos.car.permission.CAR_WINDOWS`(설치 때 자동 허용)를 선언했습니다. `grep -E "vsdk_area|vsdk_reg|vsdk_methods"`로 등록 여부를 봅니다.
+`실차 모드로` → Virtual Console에서 기어 D·속도·방향지시등·와이퍼를 바꿉니다. 판단은 리플레이와 같은 코어가 합니다. 와이퍼는 Pleos Vehicle SDK `registerWiperState(WindowArea, WiperStateListener)`로 받습니다 — 1.2.1에서 영역 `WindowArea(FRONT_WINDSHIELD)`를 만들어 등록하고 권한 `pleos.car.permission.CAR_WINDOWS`(설치 때 자동 허용)를 선언했습니다. `grep -E "vsdk_area|vsdk_reg|vsdk_methods"`로 등록 여부를 봅니다. 1.2.2부터 `vsdk_reg_missing`은 모든 등록 꼴이 실패했을 때만 남습니다(1.2.1은 한 인자 꼴이 없을 때 먼저 남겨, 두 인자 꼴 등록에 성공해도 ‘실패’처럼 보였음).
 
 | 바꿀 것 | 앱 반응 |
 |---|---|
@@ -179,6 +179,7 @@ adb logcat -d -s DP | grep -E "loc_fix|geofence|zone_xcheck|status"
 | 듣는 때 | ① **🎤 말하기**를 누를 때(최대 6초) ② 앱이 두 시간 쉬기 질문(“두 시간째예요. 쉬어 갈까요?”)을 끝낸 직후 5초. 늘 듣지 않음 |
 | 듣기 전후 | 짧은 ‘띵’ 뒤에 마이크를 엶 · 우리 말·내비 안내가 나오는 중이면 끝나기를 기다림 · 듣는 동안 앱은 새 말을 시작하지 않음 · 내비 안내가 시작되면 듣기를 멈춤 · 듣는 중에 다시 누르면 그만 |
 | 알아듣는 말 | 다시 들려줘 · 약속 알려 줘 · 조용히 해(10분 동안 안내성 말만 미룸) · (쉬기 질문에) 응/아니 — 그 밖의 말은 “잘 못 들었어요” 후 아무것도 안 함 · 질문 뒤 아무 말이 없으면 아무것도 안 함 |
+| ‘약속 알려 줘’ 대답(1.2.2) | 위험한 약속만 이름으로 · 아직 판단할 수 없는 약속(목적지가 없을 때의 해 지기 전 귀가 등)은 ‘모두’에 넣지 않고 따로: “약속 4개는 지키는 중이에요. 해 지기 전 귀가는 아직 몰라요.” |
 | 인식기 | Pleos SpeechToText 3.3.1 ON_DEVICE(오프라인) · 언어는 앱 언어(ko-KR / en-US) · 실패하면 앱은 버튼·질문 없는 문장으로 동작 |
 | 기록 | `stt_init`(준비) · `stt_wait`(말이 끝나기를 기다림) · `stt_listen`(듣기 시작) · `stt_result`(인식 끝 — release 빌드는 들은 글자 대신 글자 수) · `voice_cmd`(뜻) · 기기 안 기록(Ledger)에는 뜻(`VoiceCommand`)만 |
 

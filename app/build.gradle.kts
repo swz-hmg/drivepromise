@@ -7,6 +7,7 @@
 //   파일이 없으면 서명 없는 release(app-release-unsigned.apk)가 나오며, 제출 스크립트가 처음 한 번 전용 키를 만들어 줌.
 // 1.2.1(11/6 실행 보정): 질문 아닌 본 알림 뒤엔 듣지 않음 · 리플레이 중 듣는 동안 가상 시계 멈춤 · 주행 끝 뒤 요약을 끝까지 ·
 //   경로 바뀜 취소(onRouteCancelled) 무시 · 주행 화면 문장 기록 · 와이퍼 WindowArea 영역 · 오류 코드는 말하지 않음.
+// 1.2.2(11/6 두 번째 실행 보정): ‘약속 알려 줘’ 대답이 판단 전 약속을 ‘모두’에 넣지 않음(S83) · 와이퍼 ‘없음’ 기록은 모든 등록 꼴이 실패했을 때만
 import java.io.File
 import java.util.Properties
 
@@ -31,8 +32,8 @@ android {
         applicationId = "app.drivepromise"
         minSdk = 33
         targetSdk = 35
-        versionCode = 5
-        versionName = "1.2.1"   // 공모전 1차 제출본(11/15) — Pleos FusedLocation + SpeechToText(음성 명령) 적용, 11/6 실행 결과 보정
+        versionCode = 6
+        versionName = "1.2.2"   // 공모전 1차 제출본(11/15) — Pleos FusedLocation + SpeechToText(음성 명령) 적용, 11/6 실행 결과 보정
     }
 
     signingConfigs {
