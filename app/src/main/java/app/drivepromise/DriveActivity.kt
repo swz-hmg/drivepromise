@@ -24,11 +24,12 @@ import app.drivepromise.core.scene.SummaryPhrases
 import app.drivepromise.core.session.TripSession
 import app.drivepromise.core.speech.Lang
 import app.drivepromise.core.ui.PresentationMode
+import app.drivepromise.platform.PleosStt
 
 /**
  * 주행 화면(DO 선언, 11/5 Q036) — 주행 중 ‘화면 + 음성’ 모드(DRIVE_DO)에서만 보이는 한 장짜리 상태 화면.
- * 주행 중 제한 규칙(AAOS 운전자 주의 분산 지침)에 맞춰: 스크롤·목록·키보드·설정 없음, 글자 크게(24 sp 이상), 버튼은 하나(‘다시 들려줘’, 76 dp),
- * 문장은 플랫폼 허용 길이(maxRestrictedStringLength, 기본 120자) 안에서만.
+ * 주행 중 제한 규칙(AAOS 운전자 주의 분산 지침)에 맞춰: 스크롤·목록·키보드·설정 없음, 글자 크게(24 sp 이상), 큰 버튼 둘(‘다시 들려줘’·‘🎤 말하기’, 76 dp),
+ * 문장은 플랫폼 허용 길이(maxRestrictedStringLength, 기본 120자) 안에서만. ‘말하기’는 누를 때만 듣고(11/6 STT C안 A), 들은 말과 뜻을 아래 한 줄에 잠깐 보여 줌.
  * 내용: 약속 5개의 상태(색), 마지막으로 말한 문장(큰 글씨 — 청력이 약한 시니어·심사 영상의 ‘자막’ 역할), 연속 운전 시간.
  * 모드가 DRIVE_DO 가 아니게 되면(세움·차단·설정) 스스로 닫힘. 세워 둔 채 ‘미리보기’(preview)로도 열 수 있음(G2 시연·캡처).
  */
@@ -41,6 +42,7 @@ class DriveActivity : Activity() {
     private lateinit var pills: LinearLayout
     private lateinit var nowCard: TextView
     private lateinit var repeatBtn: Button
+    private lateinit var micBtn: Button
     private lateinit var hint: TextView
     private var repeatFlashUntil = 0L
     private var lastModeLogged: PresentationMode? = null
@@ -127,7 +129,18 @@ class DriveActivity : Activity() {
                 text = if (ok) "다시 말할게요" else "아직 말한 게 없어요"
             }
         }
-        root.addView(repeatBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(76)))
+        micBtn = Button(this).apply {
+            text = "🎤 말하기"
+            textSize = 26f
+            isAllCaps = false
+            setTextColor(Color.WHITE)
+            background = pill(MIC, radius = 20)
+            setOnClickListener { svc?.pushToTalk() }
+        }
+        val buttons = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        buttons.addView(repeatBtn, LinearLayout.LayoutParams(0, dp(76), 1f).apply { rightMargin = dp(8) })
+        buttons.addView(micBtn, LinearLayout.LayoutParams(0, dp(76), 1f).apply { leftMargin = dp(8) })
+        root.addView(buttons, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(76)))
 
         hint = text("주행 중엔 음성으로 알려 드려요 · 세우면 자세히 볼 수 있어요", 16f, color = SUB).apply { gravity = Gravity.CENTER; setPadding(0, dp(12), 0, 0) }
         root.addView(hint)
@@ -188,7 +201,22 @@ class DriveActivity : Activity() {
         nowCard.setTextColor(if (fresh) Color.WHITE else SUB)
         if (System.currentTimeMillis() > repeatFlashUntil) repeatBtn.text = if (lang == Lang.KO) "다시 들려줘" else "Say it again"
         repeatBtn.isEnabled = last != null
-        hint.text = if (lang == Lang.KO) "주행 중엔 음성으로 알려 드려요 · 세우면 자세히 볼 수 있어요" else "Voice while driving · details when parked"
+        val ko = lang == Lang.KO
+        val sttSt = s.sttState()
+        val sttOk = sttSt == PleosStt.State.READY || sttSt == PleosStt.State.LISTENING
+        micBtn.text = when {
+            s.sttListening() -> if (ko) "듣는 중…" else "Listening…"
+            sttOk -> if (ko) "🎤 말하기" else "🎤 Speak"
+            else -> if (ko) "말하기 준비 안 됨" else "Voice not ready"
+        }
+        micBtn.isEnabled = sttOk
+        micBtn.background = pill(if (s.sttListening()) LISTEN else MIC, radius = 20)
+        val heard = s.lastVoice?.takeIf { System.currentTimeMillis() - s.lastVoiceAt < 8_000 }
+        hint.text = when {
+            heard != null -> (if (ko) "들은 말: " else "Heard: ") + heard
+            sttOk -> if (ko) "‘다시’ · ‘약속 알려 줘’ · ‘조용히 해’라고 말해 보세요" else "Say ‘again’ · ‘my promises’ · ‘be quiet’"
+            else -> if (ko) "주행 중엔 음성으로 알려 드려요 · 세우면 자세히 볼 수 있어요" else "Voice while driving · details when parked"
+        }
     }
 
     // ---------------------------------------------------------------- 작은 도우미
@@ -221,6 +249,8 @@ class DriveActivity : Activity() {
         private val CARD = Color.parseColor("#1C262E")
         private val SUB = Color.parseColor("#B0BEC5")
         private val ACCENT = Color.parseColor("#1E6FD9")
+        private val MIC = Color.parseColor("#00897B")
+        private val LISTEN = Color.parseColor("#C62828")
 
         fun intent(ctx: Context, preview: Boolean = false): Intent =
             Intent(ctx, DriveActivity::class.java).putExtra("preview", preview).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)

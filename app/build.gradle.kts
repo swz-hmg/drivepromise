@@ -2,6 +2,8 @@
 // 버전·의존성은 G1-B 프로브(probes/g1b)에서 에뮬레이터 빌드·실행이 확인된 것과 같게 둠.
 // 11/5 제출본(v1.0.0): release 서명은 저장소 밖 파일(~/.drivepromise/signing.properties)에서만 읽음 — 키·암호는 저장소에 없음.
 // 1.1.0: 위치를 Pleos FusedLocation SDK 1.1.3으로(위치 업데이트 + 약속 구역 근접 알림 이중 확인), 안 되면 Android LocationManager로 자동 전환.
+// 1.2.0(11/6): 음성 명령 — Pleos SpeechToText 3.3.1(ON_DEVICE). ‘말하기’ 버튼(A) + 쉬기 질문 뒤 5초(B)만 들음.
+//   STT 호출은 모두 리플렉션이라 SDK 판이 달라도 컴파일은 깨지지 않음. 의존성을 못 받는 환경에선 -PdpStt=false 로 빼고 빌드(앱은 1.1.0처럼 동작).
 //   파일이 없으면 서명 없는 release(app-release-unsigned.apk)가 나오며, 제출 스크립트가 처음 한 번 전용 키를 만들어 줌.
 import java.io.File
 import java.util.Properties
@@ -15,6 +17,8 @@ plugins {
 val dpSigningFile: File = (findProperty("dpSigning") as String?)?.let { file(it) }
     ?: File(System.getProperty("user.home"), ".drivepromise/signing.properties")
 val dpSigning = Properties().apply { if (dpSigningFile.isFile) dpSigningFile.inputStream().use { load(it) } }
+// 음성 인식 SDK 포함 여부 — 기본 포함. 실행 스크립트가 의존성 해결에 실패하면 -PdpStt=false 로 한 번 더 빌드함
+val dpStt: Boolean = (findProperty("dpStt") as String?)?.lowercase() != "false"
 
 android {
     namespace = "app.drivepromise"
@@ -25,8 +29,8 @@ android {
         applicationId = "app.drivepromise"
         minSdk = 33
         targetSdk = 35
-        versionCode = 3
-        versionName = "1.1.0"   // 공모전 1차 제출본(11/15) — Pleos FusedLocation 적용
+        versionCode = 4
+        versionName = "1.2.0"   // 공모전 1차 제출본(11/15) — Pleos FusedLocation + SpeechToText(음성 명령) 적용
     }
 
     signingConfigs {
@@ -70,5 +74,6 @@ dependencies {
     implementation("ai.pleos.playground:NaviHelper:3.0.5")
     implementation("ai.pleos.playground:TextToSpeech:3.3.1")   // Pleos 음성 합성(ON_DEVICE) — 기기 기본 TTS는 초기화 실패(G1-B v0.5)
     implementation("ai.pleos.playground:FusedLocation:1.1.3")  // Pleos 위치(공식 샘플과 같은 버전) — 에뮬레이터 Supported·Ready, geo fix 1 Hz 반영, 근접 알림 ENTER/EXIT(11/4 실측)
+    if (dpStt) implementation("ai.pleos.playground:SpeechToText:3.3.1")   // Pleos 음성 인식(ON_DEVICE) — 리플렉션으로만 부름(platform/PleosStt.kt)
     implementation("org.jetbrains.kotlin:kotlin-reflect:2.0.0")
 }

@@ -30,11 +30,13 @@ import app.drivepromise.core.speech.Lang
 import app.drivepromise.core.ui.PresentationMode
 import app.drivepromise.core.ui.ScreenWhileDriving
 import app.drivepromise.platform.PleosFusedLocationSource
+import app.drivepromise.platform.PleosStt
 
 /**
  * 정차 화면(DO 선언 없음) — 세워 둔 동안 보는 화면: 약속 타일 5개, 출발 전 계획 카드, 주행 끝 요약, 설정(주행 중 화면·DO 가정·한/영),
  * 리플레이 버튼, 기록. 주행이 시작되고 모드가 DRIVE_DO 가 되면 주행 화면(DriveActivity, DO 선언)을 한 번 띄웁니다(11/5 Q036).
  * 모드가 DRIVE_VOICE 면 아무것도 띄우지 않고(플랫폼이 이 화면을 가림) 서비스가 음성으로만 동작합니다. 글자는 크게(시니어), 바탕은 어둡게.
+ * 11/6(STT C안): ‘🎤 말하기’ 버튼(누를 때만 들음)과 ‘질문 뒤 듣기’ 켬/끔, 마지막으로 들은 말과 뜻을 보여 줍니다.
  */
 class MainActivity : Activity() {
     private val main = Handler(Looper.getMainLooper())
@@ -50,6 +52,9 @@ class MainActivity : Activity() {
     private var resumed = false
     private lateinit var screenBtn: Button
     private lateinit var assumeBtn: Button
+    private lateinit var micBtn: Button
+    private lateinit var afterQBtn: Button
+    private lateinit var voiceView: TextView
     private val refresh = object : Runnable {
         override fun run() {
             render()
@@ -71,7 +76,8 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(buildUi())
-        requestPermissions(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, PleosFusedLocationSource.PERMISSION, Manifest.permission.POST_NOTIFICATIONS), 1)
+        requestPermissions(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, PleosFusedLocationSource.PERMISSION, Manifest.permission.POST_NOTIFICATIONS,
+            PleosStt.PERMISSION, Manifest.permission.RECORD_AUDIO), 1)
         DrivePromiseService.start(this)
         L.log("act", "s" to "create")
     }
@@ -117,6 +123,12 @@ class MainActivity : Activity() {
         root.addView(text("주행 끝 요약", 18f, color = SUB))
         summaryCard = card("아직 끝난 주행이 없어요.")
         root.addView(summaryCard)
+        root.addView(text("음성으로 말하기", 18f, color = SUB))
+        voiceView = card("‘다시’ · ‘약속 알려 줘’ · ‘조용히 해’ — 쉬기 질문엔 ‘응’이나 ‘아니’")
+        root.addView(voiceView)
+        micBtn = button("🎤 말하기") { svc?.pushToTalk() }
+        afterQBtn = button("질문 뒤 듣기: 켬") { svc?.let { it.setListenAfterQuestion(!it.listenAfterQuestion()) } }
+        root.addView(row(micBtn, afterQBtn))
         root.addView(row(
             button("경로 계획: 판교역") { svc?.plan("판교역", 37.3948, 127.1112) },
             button("주행 끝") { svc?.endTrip() },
@@ -172,6 +184,7 @@ class MainActivity : Activity() {
         subtitle.text = listOfNotNull("$phase", if (lang == Lang.KO) "연속 운전 ${min}분" else "$min min driving", mode, locText, zoneText, vsText, smText).joinToString(" · ")
         screenBtn.text = if (s.prefs.screenWhileDriving == ScreenWhileDriving.ON) (if (lang == Lang.KO) "주행 중 화면: 켜기" else "Screen while driving: on") else (if (lang == Lang.KO) "주행 중 화면: 음성만" else "Screen while driving: voice only")
         assumeBtn.text = (if (lang == Lang.KO) "DO 인정 가정: " else "Assume DO: ") + (if (s.prefs.assumeDo) (if (lang == Lang.KO) "켬" else "on") else (if (lang == Lang.KO) "끔" else "off"))
+        renderVoice(s, lang)
         // 주행 시작 + 화면 허용 → 주행 화면을 한 번만 띄움(이 화면이 앞에 있을 때만 — 뒤에 있으면 플랫폼 규칙상 띄우지 않음)
         val seq = s.screen.launchSeq
         if (seq != launchedSeq && sm == PresentationMode.DRIVE_DO) {
@@ -205,6 +218,28 @@ class MainActivity : Activity() {
         }
         logView.text = L.recent(60).filter { l -> SHOW.any { l.startsWith("event=$it ") } }.takeLast(10)
             .joinToString("\n") { it.replace(Regex(" t=\\d+"), "").take(160) }
+    }
+
+    /** 말하기 버튼·질문 뒤 듣기 설정·마지막으로 들은 말 */
+    private fun renderVoice(s: DrivePromiseService, lang: Lang) {
+        val ko = lang == Lang.KO
+        val st = s.sttState()
+        micBtn.text = when {
+            s.sttListening() -> if (ko) "듣는 중… (누르면 그만)" else "Listening… (tap to stop)"
+            st == PleosStt.State.READY || st == PleosStt.State.LISTENING -> if (ko) "🎤 말하기" else "🎤 Speak"
+            st == PleosStt.State.INIT -> if (ko) "말하기 준비 중…" else "Preparing voice…"
+            st == PleosStt.State.ERROR -> if (ko) "말하기 다시 시도" else "Retry voice"
+            else -> if (ko) "말하기 없음(음성 인식 없음)" else "Voice input unavailable"
+        }
+        micBtn.isEnabled = st != PleosStt.State.OFF && st != PleosStt.State.INIT
+        afterQBtn.text = (if (ko) "질문 뒤 듣기: " else "Listen after question: ") + (if (s.listenAfterQuestion()) (if (ko) "켬" else "on") else (if (ko) "끔" else "off"))
+        val heard = s.lastVoice?.takeIf { System.currentTimeMillis() - s.lastVoiceAt < 60_000 }
+        voiceView.text = when {
+            heard != null -> (if (ko) "들은 말: " else "Heard: ") + heard
+            st == PleosStt.State.ERROR -> (if (ko) "음성 인식 오류: " else "Voice error: ") + (s.sttError() ?: "?")
+            st == PleosStt.State.OFF -> if (ko) "이 차에서는 음성 인식을 쓸 수 없어요 — 버튼으로 써 주세요" else "Voice input is not available — use the buttons"
+            else -> if (ko) "‘다시’ · ‘약속 알려 줘’ · ‘조용히 해’ — 쉬기 질문엔 ‘응’이나 ‘아니’" else "‘again’ · ‘my promises’ · ‘be quiet’ — answer rest questions with ‘yes’ or ‘no’"
+        }
     }
 
     // ---------------------------------------------------------------- 작은 도우미
@@ -265,11 +300,13 @@ class MainActivity : Activity() {
         val granted = permissions.indices.filter { grantResults.getOrNull(it) == PackageManager.PERMISSION_GRANTED }.map { permissions[it].substringAfterLast('.') }
         L.log("perm", "granted" to granted.joinToString("+"))
         if (granted.contains("ACCESS_FINE_LOCATION") || granted.contains("FUSED_LOCATION")) svc?.startReal()   // 위치 원천(Pleos FusedLocation·대체)을 다시 붙임
+        if (granted.contains("STT_SERVICE") || granted.contains("RECORD_AUDIO")) svc?.onPermissionsChanged()   // 음성 인식이 권한 때문에 실패했으면 다시
     }
 
     companion object {
         /** 기록 칸에 보여 줄 이벤트(어댑터의 매초 콜백은 뺌) */
-        private val SHOW = listOf("speak", "phase", "status", "plan", "summary", "replay_start", "session", "cmd", "tts_init", "tts_init_error", "vsdk", "prop_reg", "location", "loc_src", "geofence", "zone_xcheck", "perm", "mode", "screen", "do_check", "uxr", "repeat")
+        private val SHOW = listOf("speak", "phase", "status", "plan", "summary", "replay_start", "session", "cmd", "tts_init", "tts_init_error", "vsdk", "prop_reg", "location", "loc_src", "geofence", "zone_xcheck", "perm", "mode", "screen", "do_check", "uxr", "repeat",
+            "stt_init", "stt_listen", "stt_result", "stt_error", "voice_cmd", "ptt")
         private val BG = Color.parseColor("#0F1418")
         private val CARD = Color.parseColor("#1C262E")
         private val SUB = Color.parseColor("#B0BEC5")

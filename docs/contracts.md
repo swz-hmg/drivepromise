@@ -32,6 +32,7 @@ DrivePromise core contract v0.1 — frozen on 2026-11-05. 실차(Pleos·AAOS 어
 | `gate` | **QuietGate · GatePolicy** — QuietWindows 구현(침묵구간검증 v0.1 선택값 P5) | v0.1(11/7 작업을 11/5에 당김) 구현·시험 |
 | `session` | **TripSession · SessionPolicy** — 상태 기계(PARKED→DRIVING→ENDED)와 부품 배선(앱·리플레이·시험이 같은 코드) · `lastSpoken` · `repeatLast()`(11/5 Q036) | v0.1(11/8 작업을 11/5에 당김) 구현·시험 |
 | `ui` | **PresentationMode · Capability · ScreenWhileDriving · ModeResolver** — 화면 모드(정차 화면 / 주행 화면+음성 / 주행 음성만) 결정표·전환 규칙·능력 판단(화면모드전환설계 v0.1, 11/5 Q036 구현) | 구현·시험 |
+| `voice` | **VoiceIntent · ListenTrigger · VoiceCommands** — 음성 명령 닫힌 문법(한·영), 모르면 UNKNOWN(11/6 Q040, STT C안) · 대답 문장은 `scene.VoicePhrases` | 구현·시험 |
 | `forecast` | ConflictForecaster(경로 앞 고속도로 진입 예고) | 11/7 |
 
 ## 2. 모델 (`model`)
@@ -153,7 +154,7 @@ yielded(id): yields + 1, 다시 대기(다음엔 짧은 문장)
 | 시점 | 말 | 종류 |
 |---|---|---|
 | 1:50 | “10분쯤 뒤면 두 시간이에요. 다음 쉴 곳에서 쉬어 가요.” | PROMISE · UNTIL_DEADLINE(1:58까지) · 주행 중에만 |
-| 2:00 | “두 시간째예요. 약속대로 쉬어 가요.” (늦으면 그때 값: “두 시간 3분째예요…”) | PROMISE · WHILE_STATE · 주행 중에만 |
+| 2:00 | “두 시간째예요. 약속대로 쉬어 가요.” (늦으면 그때 값: “두 시간 3분째예요…”) · 음성 인식을 쓸 수 있으면(`ask`, 1.2.0) 첫 말만 “두 시간째예요. 쉬어 갈까요?” — 끝나면 5초 듣기(8.8) | PROMISE · WHILE_STATE · 주행 중에만 |
 | 말한 뒤 +15·+30분 | “쉬지 않고 두 시간 15분째예요. 가까운 곳에 잠깐 세워요.” | 반복 최대 2번 |
 | 도착 15분 안 | “곧 도착이에요. 도착하면 꼭 쉬어요.” | 설계 후보(G2 수용성) |
 | 쉼 뒤 출발 | “잘 쉬셨어요. 약속 지키셨습니다.” | INFO, 예고·본 알림이 있었던 구간만 |
@@ -168,6 +169,7 @@ yielded(id): yields + 1, 다시 대기(다음엔 짧은 문장)
 | Due(key, drivingMs) | 약속 알림 시각이 됨(노출) |
 | Spoken(key, repeat, yields, endMs, lateMs) | 끝까지 들려줌(tMillis = 시작) |
 | Yielded(key, count) · Dropped(key, reason) · Digested(key, reason) | 물러섬 · 버림(expired·state_ended·rested·cancel·tts_failed) · 정차 후 요약 |
+| VoiceCommand(trigger, intent, question) | 음성 명령의 뜻만(원문 없음) — trigger BUTTON·QUESTION, question은 대답한 질문 key(예: `rest.main`) 또는 빈칸(11/6) |
 | RestTaken(restStartMs, segmentDrivingMs) · TripEnded(drivingMs) | 쉼 인정 · 주행 끝 |
 | StatusChanged(promiseId, from, to, note) | 약속 상태 변화(PromiseEngine) — 타일·요약·순응 계산 |
 
@@ -210,7 +212,7 @@ yielded(id): yields + 1, 다시 대기(다음엔 짧은 문장)
 
 ## 8. 시험 (`./gradlew :core:test`)
 
-스펙 76개(S01~S41 `Specs.kt`, S42~S56·S76 `EngineSpecs.kt`, S57~S75 `SessionSpecs.kt`) — 같은 목록을 JUnit 5(`CoreSpecsTest`, 동적 시험)와 의존성 없는 점검 러너가 돌립니다. S72는 `demo/trips/*.json`(시연 트립 4개, 앱 assets와 같은 파일)을 읽습니다.
+스펙 80개(S01~S41 `Specs.kt`, S42~S56·S76 `EngineSpecs.kt`, S57~S75·S77~S80 `SessionSpecs.kt`) — 같은 목록을 JUnit 5(`CoreSpecsTest`, 동적 시험)와 의존성 없는 점검 러너가 돌립니다. S72는 `demo/trips/*.json`(시연 트립 4개, 앱 assets와 같은 파일)을 읽습니다.
 
 | 묶음 | 스펙 |
 |---|---|
@@ -227,6 +229,8 @@ yielded(id): yields + 1, 다시 대기(다음엔 짧은 문장)
 | 세션(상태 기계·끝 조건·리플레이 통합·출발 전 계획·이어 가기·물러서기 배선) · 재생기 · 기록 JSON | S64~S71 |
 | 시연 트립 4개(병원→집 · 두 시간 쉬기 · 약속 구역 경계 · 고속도로·비) — 기대 발화 열·판정·요약 문장 | S72 |
 | 화면 모드(결정표 7경우 · 전환 규칙 히스테리시스 · 능력 판단과 차단 기억) · ‘다시 들려줘’(1회·연타 1회·침묵 구간 대기) | S73~S75 |
+| 약속 구역 경계 히스테리시스 | S76 |
+| 음성 명령: 뜻 풀이(한·영 표·조사) · 질문 뒤 듣기(질문형 문장·듣기 요청 1회·응/아니·‘다시’ 뒤 한 번 더) · 버튼(상태·조용히·도움말) · 듣는 동안 말 보류 | S77~S80 |
 
 ## 8.5 약속 엔진 (`engine` · `plan` · `scene`, 11/6 작업)
 
@@ -299,7 +303,34 @@ object ModeResolver {
 class TripSession { val lastSpoken: Step.Speak?; val lastSpokenAtMs: Long?; fun repeatLast(): Boolean /* INFO ‘repeat’, 게이트·물러서기 적용, 연타는 앞 요청 취소 */ }
 ```
 
-앱 배선(계약 밖, `app/`): `ScreenModeController`(입력: 세션 단계·`CarPackageManager.isActivityDistractionOptimized`·DO 인정 가정 설정·차단 감지·사용자 설정·디버그 강제) → `mode` · `launchSeq`. 정차 화면(`MainActivity`, DO 선언 없음)이 `launchSeq` 가 늘 때 주행 화면(`DriveActivity`, `distractionOptimized=true`)을 한 번 띄우고, 주행 화면은 모드가 `DRIVE_DO` 가 아니면 스스로 닫힘. 주행 화면이 UX 제한(`requiresDistractionOptimization`) 중에 가려지면(onStop) 차단으로 보고 서비스 수명 동안 음성만. 주행 화면 내용: 약속 5개 상태(색) · 마지막 문장(60초, 플랫폼 허용 길이 `maxRestrictedStringLength` 안) · 연속 운전 시간 · 버튼 하나(‘다시 들려줘’ → `repeatLast`). 스크롤·목록·키보드·설정 없음.
+앱 배선(계약 밖, `app/`): `ScreenModeController`(입력: 세션 단계·`CarPackageManager.isActivityDistractionOptimized`·DO 인정 가정 설정·차단 감지·사용자 설정·디버그 강제) → `mode` · `launchSeq`. 정차 화면(`MainActivity`, DO 선언 없음)이 `launchSeq` 가 늘 때 주행 화면(`DriveActivity`, `distractionOptimized=true`)을 한 번 띄우고, 주행 화면은 모드가 `DRIVE_DO` 가 아니면 스스로 닫힘. 주행 화면이 UX 제한(`requiresDistractionOptimization`) 중에 가려지면(onStop) 차단으로 보고 서비스 수명 동안 음성만. 주행 화면 내용: 약속 5개 상태(색) · 마지막 문장(60초, 플랫폼 허용 길이 `maxRestrictedStringLength` 안) · 연속 운전 시간 · 큰 버튼 둘(‘다시 들려줘’ → `repeatLast` · 1.2.0부터 ‘🎤 말하기’ → 최대 6초 듣기, 8.8). 스크롤·목록·키보드·설정 없음.
+
+## 8.8 음성 명령 (`voice` · `session`, 11/6 Q040 — STT C안: A 버튼 + B 물을 때만)
+
+```kotlin
+enum class VoiceIntent { REPEAT, STATUS, QUIET, YES, NO, UNKNOWN }
+enum class ListenTrigger { BUTTON, QUESTION }   // A ‘말하기’를 누름 · B 앱이 물은 말이 끝남
+object VoiceCommands { fun normalize(s: String): String; fun match(text: String, lang: Lang): VoiceIntent }
+class TripSession {
+    var voiceInput: Boolean        // 앱이 들을 수 있음(STT 준비 ∧ ‘질문 뒤 듣기’ 켬) → 2시간 본 알림 첫 말이 질문형
+    var listening: Boolean         // 듣는 중·듣기 직전 → 새 말을 시작하지 않음(큐 정리는 계속)
+    fun takeListenRequest(): ListenTrigger?   // 질문을 끝까지 들려줬을 때 한 번만 QUESTION
+    fun onVoice(text: String, trigger: ListenTrigger): VoiceIntent   // 뜻 → 행동·대답(INFO ‘voice.*’) + Ledger VoiceCommand
+    val lastIntent: VoiceIntent?
+}
+class SpeechScheduler { var muteInfoUntilMs: Long }   // ‘조용히’ — INFO만 미룸(repeat·voice.* 제외), 약속 경고는 그대로
+```
+
+| 규칙 | 값 / 동작 |
+|---|---|
+| 문법 우선순위 | QUIET > REPEAT > STATUS > NO > YES. 설정 언어 문법을 먼저, 다른 언어도 봄(섞어 말해도). 한 음절 대답(응·네·예)은 낱말일 때만(‘네비’에 안 걸림) · ‘약속’만 말하면 STATUS, ‘약속대로 쉴게’는 YES |
+| 질문 맥락 | trigger = QUESTION 이거나, 질문이 끝나고 `answerWindowMs`(30초) 안의 버튼 대답 → YES/NO는 그 질문의 대답(기록에 질문 key). 질문 밖의 응/아니는 도움말 |
+| ‘다시’ | 마지막 문장을 INFO `repeat`로 · 질문 중이면 질문을 다시 들려주고 한 번 더 들음(같은 질문에서 한 번만, 새 질문마다 0으로) |
+| ‘조용히’ | `quietMs`(10분) 동안 INFO만 미룸 — 미룬 INFO는 늦은 알림 규칙대로(말하거나 ‘못 전한 말’) |
+| 대답 | 짧은 한 문장(`VoicePhrases`, 1.2~4초 추정), 앞의 대답이 남아 있으면 지우고 새로 |
+| 질문 뒤 침묵 | 아무것도 하지 않음(앱이 ‘대답 없음’으로만 기록 — Ledger에는 남기지 않음) |
+
+앱 배선(계약 밖, `app/platform/PleosStt.kt` · `DrivePromiseService`): Pleos SpeechToText 3.3.1 ON_DEVICE, 모든 호출은 리플렉션(SDK 판이 달라도 컴파일 유지, 없으면 듣기만 꺼짐). 버튼은 최대 6초, 질문 뒤는 5초 · 우리 말·내비 안내 중이면 끝날 때까지(버튼 6초·질문 2초까지) 기다림 · ‘띵’(ToneGenerator 120 ms) 250 ms 뒤 `request()` · 내비 재생기가 나타나면 `stop()` · 결과는 첫 최종(`onUpdated(…, completed=true)`) 또는 시간이 다 된 뒤 부분 결과 · 시험용 PCM 주입(`sendAudio` 3,200 B/100 ms 실시간 + 0.3초 묵음 → `completeAudioSend`, `request()` 없이).
 
 ## 9. 변경 기록
 
@@ -324,6 +355,8 @@ class TripSession { val lastSpoken: Step.Speak?; val lastSpokenAtMs: Long?; fun 
 | 화면 모드(11/5 Q036) | 주행 중 화면 없음(음성만, DO 선언 안 함 — 11/5 기본값) | **DO 인정을 가정해 주행 화면(DriveActivity, DO 선언) 추가 — `ui.ModeResolver`(결정표·히스테리시스·능력 판단)·`TripSession.repeatLast()`·스펙 S73~S75** | 사용자 요청(Q036). 가정이 틀린 환경에서는 차단 감지로 음성만(바닥 모드) — 판단·발화 계약은 그대로 |
 | 어댑터 수명(앱) | 세션마다 start/close | **차량·내비 어댑터는 서비스 수명 동안 한 번만 초기화, 세션은 받는 쪽만 교체**(`shutdown()`은 서비스 종료 때) | 실측: startReal이 3회 불려(생성·권한 결과·리플레이 끝) Car·Vehicle SDK·NaviHelper가 매번 다시 초기화됨 — 낭비·중복 로그 |
 | 제출본(11/5 Q038) | versionCode 1 · 0.1 · release 서명 없음 | **1.0.0(versionCode 2) · release는 저장소 밖 키(`~/.drivepromise/signing.properties`)로 서명, 난독화 없음 · `apk/DrivePromiseTeam_DrivePromise_release.apk` · README(심사용 4항목)·`docs/MANUAL.md`** | 공모전 제출 안내(README 필수 항목·`apk/` 경로·release APK). 코어·앱 동작 변경 없음(스펙 75개 그대로) |
+| 음성 명령(11/6 Q040) | STT는 2차 계획 | **STT C안(A 버튼 + B 물을 때만 듣기) — `voice` 패키지·`VoicePhrases`·`TripSession.voiceInput/listening/takeListenRequest/onVoice`·`SpeechScheduler.muteInfoUntilMs`·Ledger `VoiceCommand`·RestTracker 질문형 문장(`ask`)·스펙 S77~S80 · 앱 1.2.0(versionCode 4)** | 사용자 결정(C안). 늘 듣지 않음(웨이크워드 없음)·닫힌 문법·모르면 행동하지 않음 — 잘못 알아듣고 행동하는 것보다 한 번 더 묻는 쪽이 안전. STT가 없으면 1.1.0과 같은 문장·동작 |
+| 근접 알림 비교(11/6) | 알림 순간에 비교 | **알림 3초 뒤 비교 + 시간 차 `lagMs`** | 1.1.0 실측: 근접 알림이 코어보다 47~88 ms 먼저 와서 0/2 ‘불일치’로 기록됨(판단은 같았음) |
 | 위치(11/5 Q039) | LocationManager(fused/gps) | **Pleos FusedLocation 1.1.3 주 · LocationManager 대체 · 약속 구역 근접 알림 이중 확인(기록만) · 경계 히스테리시스 `zoneBackM` 100 m(S76) · 앱 1.1.0(versionCode 3)** | 실제 위치를 Pleos SDK에서 받고(기술 활용), 플랫폼 근접 알림으로 구역 판정을 한 번 더 확인. 히스테리시스가 없으면 경계에 선 채 GPS가 ±30 m 흔들릴 때 ‘돌아왔어요/밖이에요’를 되풀이함(S76이 옛 코드에서 실패로 확인) |
 
 ## 10. 다음(이 계약 위에)
@@ -332,4 +365,5 @@ class TripSession { val lastSpoken: Step.Speak?; val lastSpokenAtMs: Long?; fun 
 |---|---|
 | 11/6 | ~~PromiseEngine · SolarCalc · PreTripPlanner~~ → 11/4 밤 완료(스펙 S42~S56) |
 | 11/7 | ~~gate: QuietWindows 구현~~ → 11/5 완료(S57~S63) · ConflictForecaster(경로 앞 고속도로 진입 예고) · NaviHelper 경로 ‘검색만’ API 확인(옵션별 후보) |
+| 11/7~ | 음성 명령: 에뮬레이터 실측(STT 초기화·음성 파일 주입·질문 뒤 듣기) 뒤 문법·대기 시간 조정 · RECORD_AUDIO 필요 여부 확인 · 실차 마이크·소음에서 다시 |
 | 11/8 | ~~어댑터·상태 머신·배선~~ → 11/5 `:app`(platform 패키지·DrivePromiseService·MainActivity) 구현 — 11/5 10:48·10:56 에뮬레이터 빌드·스모크 통과(병원→집: dark.risk 0초 → 요약 50초, TTS onDone 2/2) · 11/5 v0.2: 차량 신호를 Vehicle SDK로, 제한속도 콜백, 어댑터 1회 초기화 · 11/5 v0.3(Q036): DO 인정 가정 + 주행 화면(DriveActivity)·화면 모드·‘다시 들려줘’ · 남은 것: 와이퍼·전조등 열거형 이름 실측 뒤 표 좁힘, TBT 도로 이름·주의 지점·도착 콜백 보정, 주행 화면이 에뮬레이터 기어 D에서 가려지는지(차단 감지) 실측 |

@@ -34,6 +34,10 @@ import app.drivepromise.core.ui.Capability
 import app.drivepromise.core.ui.ModeResolver
 import app.drivepromise.core.ui.PresentationMode
 import app.drivepromise.core.ui.ScreenWhileDriving
+import app.drivepromise.core.scene.VoicePhrases
+import app.drivepromise.core.voice.ListenTrigger
+import app.drivepromise.core.voice.VoiceCommands
+import app.drivepromise.core.voice.VoiceIntent
 import java.io.File
 import java.time.ZoneId
 import java.time.ZonedDateTime
@@ -60,6 +64,10 @@ object SessionSpecs {
         "S73 화면 모드 — 결정표: 세워 둠은 PARKED, 주행 중엔 플랫폼 허용 ∧ 사용자 켜기일 때만 DRIVE_DO, 모르면 음성만" to ::s73,
         "S74 화면 모드 — 전환 규칙: 내려가기(화면→음성)는 즉시, 올라가기(음성→화면)는 세워 둔 동안만 · 능력 판단(차단·가정)" to ::s74,
         "S75 세션 — ‘다시 들려줘’: 마지막 문장을 INFO 로 다시 말함, 말한 것이 없으면 false, 침묵 구간에선 기다림" to ::s75,
+        "S77 음성 명령 뜻 — 닫힌 문법(한·영): 다시·약속·조용히·응·아니, ‘약속대로 쉴게’는 대답, 한 음절은 낱말일 때만, 모르면 UNKNOWN" to ::s77,
+        "S78 음성 질문(B) — STT가 있으면 2시간 본 알림이 질문, 끝나면 듣기 요청 한 번 · 응/아니 대답과 기록 · ‘다시’는 질문을 다시 들려주고 한 번 더 들음" to ::s78,
+        "S79 음성 버튼(A) — ‘약속 알려 줘’는 위험한 약속만 이름, ‘조용히’는 INFO만 10분 미룸(약속 경고·다시·대답은 그대로), 질문 없는 응/아니는 도움말" to ::s79,
+        "S80 듣는 동안 — 새 말을 시작하지 않고(마이크가 우리 목소리를 듣지 않게) 끝나면 이어 말함 · 같은 질문에서 ‘다시’ 뒤 다시 듣기는 한 번만" to ::s80,
     )
 }
 
@@ -407,6 +415,8 @@ private fun s70() {
         LedgerEvent.TripEnded(8, 9),
         LedgerEvent.StatusChanged(9, "dark", "AT_RISK", "KEPT", "trip_end"),
         LedgerEvent.Dropped(10, "q\"uote\\슬래시", "줄\n바꿈"),
+        LedgerEvent.VoiceCommand(11, "QUESTION", "YES", "rest.main"),
+        LedgerEvent.VoiceCommand(12, "BUTTON", "STATUS"),
     )
     for (e in all) eq(LedgerJson.decode(LedgerJson.encode(e)), e, "왕복 $e")
     ok(LedgerJson.encode(all[0]) == """{"t":1,"e":"Due","key":"rest.main","drivingMs":7200000}""", "모양: ${LedgerJson.encode(all[0])}")
@@ -566,3 +576,144 @@ private fun s75() {
     eq(r.log.count { it.key == "repeat" }, 2, "꺼지면 말함: ${r.keys()}")
 }
 
+
+// ---------------------------------------------------------------- S77~S79 (11/6 Q040: STT C안 — A 버튼 + B 물을 때만 듣기)
+private fun s77() {
+    val ko = listOf(
+        "다시 들려줘" to VoiceIntent.REPEAT, "뭐라고?" to VoiceIntent.REPEAT, "한 번 더" to VoiceIntent.REPEAT, "아니 다시 말해 줘" to VoiceIntent.REPEAT,
+        "약속 알려 줘" to VoiceIntent.STATUS, "내 약속 어때" to VoiceIntent.STATUS, "약속" to VoiceIntent.STATUS, "상태 알려줘" to VoiceIntent.STATUS,
+        "조용히 해" to VoiceIntent.QUIET, "그만해" to VoiceIntent.QUIET, "말 좀 그만" to VoiceIntent.QUIET,
+        "응" to VoiceIntent.YES, "네." to VoiceIntent.YES, "그래 쉴게" to VoiceIntent.YES, "약속대로 쉴게요" to VoiceIntent.YES, "알겠어" to VoiceIntent.YES,
+        "아니" to VoiceIntent.NO, "아니요 괜찮아요" to VoiceIntent.NO, "안 쉬어도 돼" to VoiceIntent.NO, "조금 더 갈게" to VoiceIntent.NO, "나중에" to VoiceIntent.NO,
+        "네비 켜 줘" to VoiceIntent.UNKNOWN, "음" to VoiceIntent.UNKNOWN, "" to VoiceIntent.UNKNOWN, "오늘 날씨" to VoiceIntent.UNKNOWN,
+    )
+    for ((t, want) in ko) eq(VoiceCommands.match(t, Lang.KO), want, "한국어 ‘$t’")
+    val en = listOf("say that again" to VoiceIntent.REPEAT, "my promises" to VoiceIntent.STATUS, "be quiet" to VoiceIntent.QUIET,
+        "yes" to VoiceIntent.YES, "okay let's rest" to VoiceIntent.YES, "no" to VoiceIntent.NO, "not now" to VoiceIntent.NO, "navigate home" to VoiceIntent.UNKNOWN)
+    for ((t, want) in en) eq(VoiceCommands.match(t, Lang.EN), want, "영어 ‘$t’")
+    eq(VoiceCommands.match("응", Lang.EN), VoiceIntent.YES, "영어 설정에서도 한국어 대답을 알아들음")
+    eq(VoicePhrases.josa("해 지기 전 귀가", "이", "가"), "가", "받침 없음 → 가")
+    eq(VoicePhrases.josa("약속 구역", "이", "가"), "이", "받침 있음 → 이")
+}
+
+private fun s78() {
+    // STT 없음(1.1.0과 같음): 문장 그대로, 듣기 요청 없음
+    val off = SessionRig(listOf(Promise.RestEvery(120)))
+    off.ses.restoreRest(RestTracker.State(119 * MIN, T0, true, false))
+    off.ses.onFix(seoul(T0)); off.ses.onVehicle(drive(T0))
+    off.run(70_000)
+    eq(off.log.map { it.text }, listOf("두 시간째예요. 약속대로 쉬어 가요."), "STT가 없으면 질문으로 바꾸지 않음")
+    eq(off.ses.takeListenRequest(), null, "듣기 요청 없음")
+    // STT 있음: 질문 → 끝나면 듣기 요청 한 번 → ‘응’ → 대답 + 기록
+    val r = SessionRig(listOf(Promise.RestEvery(120)))
+    r.ses.voiceInput = true
+    r.ses.restoreRest(RestTracker.State(119 * MIN, T0, true, false))
+    r.ses.onFix(seoul(T0)); r.ses.onVehicle(drive(T0))
+    var req: ListenTrigger? = null
+    r.run(66_000) { if (req == null) req = r.ses.takeListenRequest() }
+    eq(r.log.map { it.text }, listOf("두 시간째예요. 쉬어 갈까요?"), "질문형 본 알림")
+    eq(req, ListenTrigger.QUESTION, "질문이 끝나면 듣기 요청")
+    eq(r.ses.takeListenRequest(), null, "요청은 한 번만")
+    eq(r.ses.onVoice("응 쉴게", ListenTrigger.QUESTION), VoiceIntent.YES, "대답 ‘응 쉴게’")
+    r.run(72_000)
+    eq(r.log.last().text, "좋아요. 다음 쉴 곳에서 쉬어요.", "응 → 대답")
+    val vc = r.ses.memory.events.filterIsInstance<LedgerEvent.VoiceCommand>()
+    eq(vc, listOf(LedgerEvent.VoiceCommand(vc[0].tMillis, "QUESTION", "YES", "rest.main")), "기록: 뜻과 질문만(원문 없음)")
+    eq(r.ses.onVoice("응", ListenTrigger.BUTTON), VoiceIntent.YES, "질문이 닫힌 뒤의 ‘응’")
+    r.run(78_000)
+    eq(r.log.last().key, "voice.help", "질문 없는 대답 → 도움말")
+    // ‘다시’ → 질문을 다시 들려주고 한 번 더 들음(한 번만), 그다음 ‘아니’
+    val q = SessionRig(listOf(Promise.RestEvery(120)))
+    q.ses.voiceInput = true
+    q.ses.restoreRest(RestTracker.State(119 * MIN, T0, true, false))
+    q.ses.onFix(seoul(T0)); q.ses.onVehicle(drive(T0))
+    q.run(66_000)
+    eq(q.ses.takeListenRequest(), ListenTrigger.QUESTION, "첫 질문 뒤 듣기")
+    eq(q.ses.onVoice("뭐라고?", ListenTrigger.QUESTION), VoiceIntent.REPEAT, "다시")
+    var again: ListenTrigger? = null
+    q.run(72_000) { if (again == null) again = q.ses.takeListenRequest() }
+    eq(q.log.last().key, "repeat", "질문을 다시 들려줌")
+    eq(q.log.last().text, "두 시간째예요. 쉬어 갈까요?", "같은 질문")
+    eq(again, ListenTrigger.QUESTION, "다시 들려준 뒤 한 번 더 들음")
+    eq(q.ses.onVoice("아니 괜찮아", ListenTrigger.QUESTION), VoiceIntent.NO, "아니")
+    q.run(78_000)
+    eq(q.log.last().text, "알겠어요. 조심히 가요.", "아니 → 대답")
+    // 질문이 끝나고 30초 안에 ‘말하기’로 한 대답도 그 질문의 대답
+    val b = SessionRig(listOf(Promise.RestEvery(120)))
+    b.ses.voiceInput = true
+    b.ses.restoreRest(RestTracker.State(119 * MIN, T0, true, false))
+    b.ses.onFix(seoul(T0)); b.ses.onVehicle(drive(T0))
+    b.run(80_000)
+    eq(b.ses.onVoice("네", ListenTrigger.BUTTON), VoiceIntent.YES, "버튼으로 한 대답")
+    b.run(86_000)
+    eq(b.log.last().key, "voice.yes", "30초 안이면 질문의 대답")
+    eq(b.ses.memory.events.filterIsInstance<LedgerEvent.VoiceCommand>().single().question, "rest.main", "기록에 질문 key")
+}
+
+private fun s79() {
+    val r = SessionRig(FOUR)
+    r.ses.voiceInput = true
+    r.ses.onFix(seoul(T0)); r.ses.onVehicle(PARK.copy(tMillis = T0))
+    r.run(2_000)
+    eq(r.ses.onVoice("약속 알려 줘", ListenTrigger.BUTTON), VoiceIntent.STATUS, "약속 알려 줘")
+    r.run(8_000)
+    ok(r.log.last().key == "voice.status", "상태 대답: ${r.keys()}")
+    val st = r.log.last().text
+    ok(st.startsWith("약속 ") && st.endsWith("지키는 중이에요."), "위험 없으면 개수만: $st")
+    eq(r.ses.onVoice("다시", ListenTrigger.BUTTON), VoiceIntent.REPEAT, "다시")
+    r.run(14_000)
+    eq(r.log.last().key, "repeat", "다시 → 마지막 문장")
+    eq(r.log.last().text, st, "같은 문장")
+    // 주행 시작: 해 지기 전 귀가 위험(dark.risk, PROMISE) — ‘조용히’ 중에도 말함, INFO(출발 전 계획 문장)는 미룸
+    eq(r.ses.onVoice("조용히 해", ListenTrigger.BUTTON), VoiceIntent.QUIET, "조용히")
+    r.run(20_000)
+    eq(r.log.last().text, "네, 10분 동안 조용히 할게요.", "조용히 대답은 말함")
+    r.ses.scheduler.submit(Utterance("info.test", Priority.INFO, 2_000, render = { "INFO 문장" }), r.clock.t)
+    r.ses.onVehicle(drive(r.clock.t))
+    r.ses.onNavi(NaviEvent.Trip(r.clock.t, T0 + 60 * MIN, 30_000))
+    r.run(40_000)
+    ok(r.keys().contains("dark.risk"), "약속 경고는 조용히 중에도: ${r.keys()}")
+    ok(!r.keys().contains("info.test"), "INFO는 미룸: ${r.keys()}")
+    eq(r.ses.onVoice("다시", ListenTrigger.BUTTON), VoiceIntent.REPEAT, "조용히 중에도 다시는 됨")
+    r.run(46_000)
+    eq(r.log.last().key, "repeat", "직접 청한 말은 조용히 중에도")
+    r.run(10 * MIN + 30_000)
+    val fate = r.ses.memory.events.filter { (it is LedgerEvent.Digested && it.key == "info.test") || (it is LedgerEvent.Spoken && it.key == "info.test") }
+    ok(fate.isNotEmpty(), "미뤄진 INFO는 늦은 알림 규칙대로 정리(말하거나 ‘못 전한 말’로): ${r.keys()}")
+    r.ses.scheduler.submit(Utterance("info.after", Priority.INFO, 2_000, render = { "다시 말함" }), r.clock.t)
+    r.run(10 * MIN + 40_000)
+    ok(r.keys().contains("info.after"), "10분이 지나면 INFO를 다시 말함: ${r.keys()}")
+    val risky = VoicePhrases.status(Lang.KO, FOUR, mapOf("dark" to PromiseStatus.AT_RISK, "highway" to PromiseStatus.ON_TRACK, "rest" to PromiseStatus.ON_TRACK, "zone" to PromiseStatus.MISSED))
+    eq(risky, "해 지기 전 귀가·약속 구역이 위험해요. 나머지는 지키는 중이에요.", "위험한 약속만 이름(조사 맞춤)")
+    eq(VoicePhrases.status(Lang.KO, FOUR, emptyMap()), "아직 판단할 신호가 없어요.", "신호 없음")
+}
+
+private fun s80() {
+    // 듣는 동안(listening=true) 큐에 든 말은 시작하지 않음 → 끝나면 말함
+    val r = SessionRig(FOUR)
+    r.ses.voiceInput = true
+    r.ses.onFix(seoul(T0)); r.ses.onVehicle(PARK.copy(tMillis = T0))
+    r.run(2_000)
+    r.ses.listening = true
+    r.ses.scheduler.submit(Utterance("info.hold", Priority.INFO, 2_000, render = { "기다린 말" }), r.clock.t)
+    r.run(7_000)
+    ok(!r.keys().contains("info.hold"), "듣는 동안엔 말하지 않음: ${r.keys()}")
+    r.ses.listening = false
+    r.run(9_000)
+    ok(r.keys().contains("info.hold"), "듣기가 끝나면 이어 말함: ${r.keys()}")
+    // ‘다시’ 뒤 다시 듣기: 한 질문에 한 번만(새 질문이 시작되면 횟수는 0으로 — TripSession.tick)
+    val q = SessionRig(listOf(Promise.RestEvery(120)))
+    q.ses.voiceInput = true
+    q.ses.restoreRest(RestTracker.State(119 * MIN, T0, true, false))
+    q.ses.onFix(seoul(T0)); q.ses.onVehicle(drive(T0))
+    q.run(66_000)
+    eq(q.ses.takeListenRequest(), ListenTrigger.QUESTION, "첫 질문 뒤 듣기")
+    q.ses.onVoice("다시", ListenTrigger.QUESTION)
+    var again: ListenTrigger? = null
+    q.run(72_000) { if (again == null) again = q.ses.takeListenRequest() }
+    eq(again, ListenTrigger.QUESTION, "다시 들려준 뒤 한 번 더 들음")
+    q.ses.onVoice("다시", ListenTrigger.QUESTION)
+    var third: ListenTrigger? = null
+    q.run(78_000) { if (third == null) third = q.ses.takeListenRequest() }
+    eq(third, null, "같은 질문에서 두 번째 ‘다시’ 뒤엔 더 듣지 않음")
+}

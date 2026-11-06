@@ -54,6 +54,14 @@ class Prefs(ctx: Context) {
         get() = sp.getBoolean("screen.assumeDo", true)
         set(v) { sp.edit().putBoolean("screen.assumeDo", v).apply() }
 
+    /**
+     * 질문 뒤 듣기(STT C안의 B) — 기본 켬. 끄면 앱이 먼저 마이크를 열지 않고(쉬기 알림도 질문 없는 문장), ‘말하기’ 버튼(A)만 씀.
+     * 버튼은 운전자가 누를 때만 들으므로 이 설정과 상관없이 동작합니다.
+     */
+    var listenAfterQuestion: Boolean
+        get() = sp.getBoolean("voice.afterQuestion", true)
+        set(v) { sp.edit().putBoolean("voice.afterQuestion", v).apply() }
+
     fun restState(): RestTracker.State? {
         if (!sp.contains("rest.drivingMs")) return null
         return RestTracker.State(

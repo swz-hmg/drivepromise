@@ -18,6 +18,7 @@ object LedgerJson {
             is LedgerEvent.RestTaken -> sb.kv("e", "RestTaken").kv("restStartMs", e.restStartMs).kv("segmentDrivingMs", e.segmentDrivingMs)
             is LedgerEvent.TripEnded -> sb.kv("e", "TripEnded").kv("drivingMs", e.drivingMs)
             is LedgerEvent.StatusChanged -> sb.kv("e", "StatusChanged").kv("promiseId", e.promiseId).kv("from", e.from).kv("to", e.to).kv("note", e.note)
+            is LedgerEvent.VoiceCommand -> sb.kv("e", "VoiceCommand").kv("trigger", e.trigger).kv("intent", e.intent).kv("question", e.question)
         }
         return sb.append('}').toString()
     }
@@ -35,6 +36,7 @@ object LedgerJson {
             "RestTaken" -> LedgerEvent.RestTaken(t, m.long("restStartMs") ?: t, m.long("segmentDrivingMs") ?: 0)
             "TripEnded" -> LedgerEvent.TripEnded(t, m.long("drivingMs") ?: 0)
             "StatusChanged" -> LedgerEvent.StatusChanged(t, m.str("promiseId"), m.str("from"), m.str("to"), m.str("note"))
+            "VoiceCommand" -> LedgerEvent.VoiceCommand(t, m.str("trigger"), m.str("intent"), m.str("question"))
             else -> null
         }
     }

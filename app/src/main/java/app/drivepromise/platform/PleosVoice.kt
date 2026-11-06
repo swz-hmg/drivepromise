@@ -40,6 +40,8 @@ class PleosVoice(
         private set
     private var curId: Long? = null
     private var speaking = false
+    /** 지금 우리 말을 재생 중인가 — 듣기(STT)는 말이 끝난 뒤에 시작(마이크가 우리 목소리를 듣지 않게) */
+    val isSpeaking: Boolean get() = speaking
     private var stopRequested = false
     private var focusReq: AudioFocusRequest? = null
     private var holdFocus: Runnable? = null

@@ -38,6 +38,12 @@ class SpeechScheduler(
     val pendingKeys: List<String> get() = ordered().map { it.u.key }
     val speakingKey: String? get() = speaking?.u?.key
 
+    /**
+     * ‘조용히’(음성 명령) — 이 시각까지 INFO 말은 미룸. 안전·약속(SAFETY·PROMISE)과, 운전자가 직접 청한 말
+     * (‘다시’의 repeat, 음성 대답 voice.*)은 그대로 말함. 미뤄진 말은 대기열에 남아 유효성 규칙대로 정리됩니다.
+     */
+    var muteInfoUntilMs = 0L
+
     fun submit(u: Utterance, nowMs: Long): Long {
         val p = Pending(nextId++, u, nowMs, nowMs, 0)
         queue += p
@@ -59,6 +65,7 @@ class SpeechScheduler(
         if (speaking != null || !voiceFree) return Step.Idle
         for (p in ordered()) {
             if (p.notBefore > now || !p.u.speakWhen(w)) continue
+            if (p.u.priority == Priority.INFO && now < muteInfoUntilMs && p.u.key != "repeat" && !p.u.key.startsWith("voice.")) continue
             val short = p.yields > 0
             val need = if (short) p.u.estShortMs else p.u.estMs
             if (!windowOk(p, now, need)) continue

@@ -35,6 +35,9 @@ sealed interface LedgerEvent {
 
     /** 약속 상태 변화(PromiseEngine) — 정차 화면 타일·요약·순응 계산용. ★ 약속엔진 v0.1에서 추가(기본값 있는 추가) */
     data class StatusChanged(override val tMillis: Long, val promiseId: String, val from: String, val to: String, val note: String = "") : LedgerEvent
+
+    /** 음성 명령 하나(11/6 STT) — 원문은 남기지 않고 뜻만: trigger(BUTTON·QUESTION) · intent · 대답한 질문 key(없으면 "") */
+    data class VoiceCommand(override val tMillis: Long, val trigger: String, val intent: String, val question: String = "") : LedgerEvent
 }
 
 fun interface LedgerSink {

@@ -18,6 +18,7 @@ import app.drivepromise.core.plan.PreTripPlanner
 import app.drivepromise.core.replay.ReplayPlayer
 import app.drivepromise.core.rest.RestTracker
 import app.drivepromise.core.scene.SummaryPhrases
+import app.drivepromise.core.scene.VoicePhrases
 import app.drivepromise.core.source.Clock
 import app.drivepromise.core.source.LocationSource
 import app.drivepromise.core.source.Place
@@ -28,6 +29,9 @@ import app.drivepromise.core.source.VehicleSource
 import app.drivepromise.core.speech.AudioUsage
 import app.drivepromise.core.speech.DigestItem
 import app.drivepromise.core.speech.Lang
+import app.drivepromise.core.voice.ListenTrigger
+import app.drivepromise.core.voice.VoiceCommands
+import app.drivepromise.core.voice.VoiceIntent
 import app.drivepromise.core.speech.Priority
 import app.drivepromise.core.speech.QuietPolicy
 import app.drivepromise.core.speech.RestPolicy
@@ -58,6 +62,10 @@ data class SessionPolicy(
     /** 출발 전 계획·주행 끝 요약을 (세워 둔 동안) 말로도 들려줌 */
     val speakPlan: Boolean = true,
     val speakSummary: Boolean = true,
+    /** 질문(2시간 쉬기)이 끝난 뒤 이 시간 안에 ‘말하기’로 한 ‘응/아니’도 그 질문의 대답으로 봄(11/6 STT) */
+    val answerWindowMs: Long = 30_000,
+    /** ‘조용히’ — INFO 말을 미루는 시간 */
+    val quietMs: Long = 10 * 60_000,
 )
 
 /**
@@ -189,7 +197,15 @@ class TripSession(
     // ---------------------------------------------------------------- 음성 쪽 콜백(플랫폼 → 세션)
     fun onNavPlayers(active: Int): VoiceArbiter.Action = voice.onNavPlayers(clock.nowMs(), active)
     fun onFocus(change: VoiceArbiter.Focus): VoiceArbiter.Action = voice.onFocus(clock.nowMs(), change)
-    fun onSpeechDone(id: Long) = voice.onDone(id, clock.nowMs())
+    fun onSpeechDone(id: Long) {
+        val now = clock.nowMs()
+        voice.onDone(id, now)
+        if (id == questionSpeakId) {   // 질문을 끝까지 들려줌 → 앱이 짧게 들음(B)
+            questionSpeakId = null
+            questionEndMs = now
+            listenRequest = ListenTrigger.QUESTION
+        }
+    }
     fun onSpeechError(id: Long, cause: String) = voice.onError(id, clock.nowMs(), cause)
 
     // ---------------------------------------------------------------- 루프
@@ -213,8 +229,13 @@ class TripSession(
             engine.tick(w)
             checkPhase(now, v)
         }
-        val step = voice.tick(w)
-        if (step is Step.Speak) { lastSpoken = step; lastSpokenAtMs = now; listener.onSpeak(step, now) }
+        val step = if (listening) voice.scheduler.tick(w, false) else voice.tick(w)   // 듣는 동안은 새 말을 시작하지 않음(정리만)
+        if (step is Step.Speak) {
+            lastSpoken = step; lastSpokenAtMs = now
+            if (voiceInput && step.key == RestTracker.KEY_MAIN && step.repeat == 0) { questionSpeakId = step.id; questionKey = step.key; questionEndMs = null; questionRepeats = 0 }
+            else if (step.key == "repeat" && repeatIsQuestion) { questionSpeakId = step.id; repeatIsQuestion = false }
+            listener.onSpeak(step, now)
+        }
         val st = engine.statuses
         if (st != lastStatuses) {
             lastStatuses = st
@@ -315,6 +336,69 @@ class TripSession(
         scheduler.cancel("repeat", now, "replaced")
         scheduler.submit(Utterance("repeat", Priority.INFO, estMs = (350L * text.length).coerceIn(1_000L, 4_000L), render = { text }), now)
         return true
+    }
+
+    // ---------------------------------------------------------------- 음성 명령(STT C안 — A 버튼 · B 물을 때만, 11/6)
+    /**
+     * 앱이 STT를 쓸 수 있으면 true — 2시간 쉬기 본 알림 첫 말을 질문으로 바꾸고, 그 말이 끝나면 [takeListenRequest]가
+     * QUESTION을 돌려줌(앱은 그때만 짧게 들음). STT가 없으면 false: 문장·동작이 1.1.0과 같음.
+     */
+    var voiceInput: Boolean = false
+        set(v) { field = v; rest.ask = v }
+    /**
+     * 앱이 마이크로 듣는 중(또는 듣기를 기다리는 중)이면 true — 그동안 새 말을 시작하지 않습니다(마이크가 우리 목소리를 듣지 않게).
+     * 큐의 유효성 정리는 그대로 하고, 듣기가 끝나면(최대 6초) 밀린 말을 이어서 합니다. 이미 말하는 중인 말은 끊지 않습니다.
+     */
+    var listening: Boolean = false
+    private var questionSpeakId: Long? = null
+    private var questionKey: String? = null
+    private var questionEndMs: Long? = null
+    private var listenRequest: ListenTrigger? = null
+    private var repeatIsQuestion = false
+    private var questionRepeats = 0
+    /** 마지막 음성 명령의 뜻(화면 표시·시험용) */
+    var lastIntent: VoiceIntent? = null
+        private set
+
+    /** 듣기 요청을 한 번 꺼냄 — 질문이 끝났을 때만 QUESTION, 아니면 null */
+    fun takeListenRequest(): ListenTrigger? = listenRequest.also { listenRequest = null }
+
+    /**
+     * 알아들은 글자 → 뜻 → 행동(대답은 INFO ‘voice.*’, 끼어든 이전 대답은 지움). 원문은 기록하지 않고 뜻만 Ledger에.
+     * 질문 맥락: trigger가 QUESTION이거나, 질문이 끝난 뒤 [SessionPolicy.answerWindowMs] 안의 ‘말하기’.
+     */
+    fun onVoice(text: String, trigger: ListenTrigger): VoiceIntent {
+        val now = clock.nowMs()
+        val intent = VoiceCommands.match(text, lang)
+        val qEnd = questionEndMs
+        val inQuestion = questionKey != null && (trigger == ListenTrigger.QUESTION || (qEnd != null && now - qEnd <= policy.answerWindowMs))
+        val q = if (inQuestion) questionKey else null
+        lastIntent = intent
+        ledger.accept(LedgerEvent.VoiceCommand(now, trigger.name, intent.name, q ?: ""))
+        when (intent) {
+            VoiceIntent.REPEAT -> {
+                if (!repeatLast()) reply("nothing", VoicePhrases.nothing(lang), now)
+                else if (q != null && questionRepeats < 1) { questionRepeats++; repeatIsQuestion = true }   // 질문을 다시 들려준 뒤 한 번 더 들음
+            }
+            VoiceIntent.STATUS -> reply("status", VoicePhrases.status(lang, promises, engine.statuses), now)
+            VoiceIntent.QUIET -> {
+                scheduler.muteInfoUntilMs = now + policy.quietMs
+                reply("quiet", VoicePhrases.quiet(lang, policy.quietMs / 60_000), now)
+            }
+            VoiceIntent.YES -> if (q != null) { closeQuestion(); reply("yes", VoicePhrases.yes(lang), now) } else reply("help", VoicePhrases.help(lang), now)
+            VoiceIntent.NO -> if (q != null) { closeQuestion(); reply("no", VoicePhrases.no(lang), now) } else reply("help", VoicePhrases.help(lang), now)
+            VoiceIntent.UNKNOWN -> reply("unknown", VoicePhrases.unknown(lang), now)
+        }
+        return intent
+    }
+
+    private fun closeQuestion() {
+        questionKey = null; questionEndMs = null; questionSpeakId = null; repeatIsQuestion = false
+    }
+
+    private fun reply(k: String, text: String, now: Long) {
+        scheduler.cancel("voice.", now, "replaced")
+        scheduler.submit(Utterance("voice.$k", Priority.INFO, estMs = (300L * text.length).coerceIn(1_200L, 4_000L), render = { text }), now)
     }
 
     fun restState(): RestTracker.State = rest.state()

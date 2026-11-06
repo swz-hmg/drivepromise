@@ -176,37 +176,74 @@ class PleosVehicleSource(private val ctx: Context, private val main: Handler) : 
     /**
      * register*(listener) 함수에 동적 리스너를 붙임(공식 샘플 VehicleApiExplorer 방식). 자바 리플렉션만 써서 난독화된
      * 구현 클래스에서도 동작합니다. 콜백은 (함수 이름, 인자 toString) 으로 받고, 인자가 바뀔 때만 기록합니다.
+     * 11/6: 1.1.0 실측에서 Wiper.registerWiperState 를 못 찾음(vsdk_reg_missing) → ① 리스너가 Kotlin 함수형(kotlin.jvm.functions.*)이어도 받고
+     * ② 그래도 없으면 그 도메인의 register*·add* 함수 모양을 모두 기록(vsdk_methods)하고 ③ (영역, 리스너) 두 인자 꼴이면 앞 유리 영역으로 붙여 봄.
      */
     private fun registerByReflection(domain: String, target: Any?, names: Set<String>, on: (String, String) -> Unit) {
         if (target == null) return
-        val methods: List<Method> = target.javaClass.methods.filter {
-            it.name in names && it.parameterTypes.size == 1 && it.parameterTypes[0].isInterface &&
-                it.parameterTypes[0].name.startsWith("ai.pleos.")   // 리스너 인터페이스(…vehicle.listener.*)
+        val all = target.javaClass.methods
+        val single = all.filter { it.name in names && it.parameterTypes.size == 1 && isListener(it.parameterTypes[0]) }
+        if (single.isNotEmpty()) {
+            for (m in single) attach(domain, target, m, on) { l -> arrayOf(l) }
+            return
         }
-        if (methods.isEmpty()) L.log("vsdk_reg_missing", "domain" to domain, "want" to names.joinToString("+"))
-        for (m in methods) {
-            val lc = m.parameterTypes[0]
-            val listener = Proxy.newProxyInstance(lc.classLoader, arrayOf(lc)) { proxy, method, args ->
-                when (method.name) {
-                    "equals" -> proxy === args?.firstOrNull()
-                    "hashCode" -> System.identityHashCode(proxy)
-                    "toString" -> "DP(${lc.simpleName})"
-                    else -> {
-                        val s = args?.joinToString(" ") { it.toString() } ?: ""
-                        val k = "$domain.${method.name}"
-                        if (lastArgs[k] != s) { lastArgs[k] = s; L.log("vsdk", "domain" to domain, "cb" to method.name, "args" to s.take(200)) }
-                        if (!method.name.startsWith("onFail") && !method.name.startsWith("onError")) on(m.name, s)
-                        null
-                    }
+        val regs = all.filter { (it.name.startsWith("register") || it.name.startsWith("add")) && it.parameterTypes.isNotEmpty() }
+        L.log("vsdk_reg_missing", "domain" to domain, "want" to names.joinToString("+"))
+        L.log("vsdk_methods", "domain" to domain, "fns" to regs.joinToString("+") { m -> m.name + "(" + m.parameterTypes.joinToString(",") { it.name.substringAfterLast('.') } + ")" }.ifEmpty { "없음" }.take(700))
+        // (영역, 리스너) 꼴 — 와이퍼는 창 영역 속성(AAOS WINDSHIELD_WIPERS_STATE)이라 영역 인자를 받을 수 있음
+        val pair = all.filter { it.name in names && it.parameterTypes.size == 2 && it.parameterTypes.count { p -> isListener(p) } == 1 }
+        for (m in pair) {
+            val li = m.parameterTypes.indexOfFirst { isListener(it) }
+            val other = m.parameterTypes[1 - li]
+            val area: Any = areaArg(other) ?: continue
+            attach(domain, target, m, on) { l -> if (li == 0) arrayOf(l, area) else arrayOf(area, l) }
+        }
+    }
+
+    /** 리스너로 볼 인자 — Pleos 리스너 인터페이스 또는 Kotlin 함수형 */
+    private fun isListener(c: Class<*>): Boolean = c.isInterface && (c.name.startsWith("ai.pleos.") || c.name.startsWith("kotlin.jvm.functions.") || c.name.startsWith("kotlin.jvm.internal."))
+
+    /** 영역 인자 후보: 정수면 앞 유리(Pleos WindowValue 의 FRONT… 상수, 없으면 AAOS FRONT_WINDSHIELD=1), 열거형이면 FRONT/WINDSHIELD 가 든 값 */
+    private fun areaArg(c: Class<*>): Any? = when {
+        c == Int::class.javaPrimitiveType || c == Int::class.javaObjectType -> frontWindowArea()
+        c.isEnum -> c.enumConstants?.firstOrNull { e -> (e as Enum<*>).name.uppercase().let { it.contains("FRONT") || it.contains("WINDSHIELD") } } ?: c.enumConstants?.firstOrNull()
+        else -> null
+    }
+
+    private fun frontWindowArea(): Int {
+        for (cn in listOf("ai.pleos.playground.vehicle.constant.area.WindowValue", "ai.pleos.playground.vehicle.constant.area.AreaValue")) {
+            try {
+                val c = Class.forName(cn)
+                val f = c.fields.firstOrNull { it.type == Int::class.javaPrimitiveType && it.name.uppercase().contains("FRONT") && (it.name.uppercase().contains("WIND") || it.name.uppercase().contains("SHIELD")) }
+                    ?: c.fields.firstOrNull { it.type == Int::class.javaPrimitiveType && it.name.uppercase().contains("FRONT") }
+                if (f != null) return f.getInt(null)
+            } catch (_: Throwable) {}
+        }
+        return 1   // VehicleAreaWindow.FRONT_WINDSHIELD
+    }
+
+    private fun attach(domain: String, target: Any, m: Method, on: (String, String) -> Unit, args: (Any) -> Array<Any>) {
+        val lc = m.parameterTypes.first { isListener(it) }
+        val listener = Proxy.newProxyInstance(lc.classLoader, arrayOf(lc)) { proxy, method, a ->
+            when (method.name) {
+                "equals" -> proxy === a?.firstOrNull()
+                "hashCode" -> System.identityHashCode(proxy)
+                "toString" -> "DP(${lc.simpleName})"
+                else -> {
+                    val s = a?.joinToString(" ") { it.toString() } ?: ""
+                    val k = "$domain.${method.name}"
+                    if (lastArgs[k] != s) { lastArgs[k] = s; L.log("vsdk", "domain" to domain, "cb" to method.name, "args" to s.take(200)) }
+                    if (!method.name.startsWith("onFail") && !method.name.startsWith("onError")) on(m.name, s)
+                    if (lc.name.startsWith("kotlin.jvm.functions.")) Unit else null   // 함수형(invoke)은 Unit 을 돌려줘야 함
                 }
             }
-            try {
-                m.invoke(target, listener)
-                okSources += "sdk:$domain.${m.name}"
-                L.log("vsdk_reg", "domain" to domain, "fn" to m.name)
-            } catch (e: Throwable) {
-                L.log("vsdk_reg_error", "domain" to domain, "fn" to m.name, "err" to (e.cause ?: e))
-            }
+        }
+        try {
+            m.invoke(target, *args(listener))
+            okSources += "sdk:$domain.${m.name}"
+            L.log("vsdk_reg", "domain" to domain, "fn" to m.name, "argc" to m.parameterTypes.size)
+        } catch (e: Throwable) {
+            L.log("vsdk_reg_error", "domain" to domain, "fn" to m.name, "err" to (e.cause ?: e))
         }
     }
 

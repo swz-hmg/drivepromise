@@ -39,6 +39,9 @@ class RestTracker(
     /** 마지막 쉼 이후 운전 시간 */
     var drivingMs = 0L
         private set
+
+    /** STT로 대답을 들을 수 있으면 true — 본 알림 첫 말을 질문(‘쉬어 갈까요?’)으로 바꿈(11/6 STT B안). 세션이 켬 */
+    var ask = false
     private var lastT: Long? = null
     private var lastDrivingAt: Long? = null
     private var parkedSince: Long? = null
@@ -144,7 +147,7 @@ class RestTracker(
         speakWhen = DRIVING,   // 세워 둔 동안(P)엔 미룸 — ‘가까운 곳에 세워요’를 이미 선 차에 말하지 않게
         repeatAfterMs = repeatMs,
         maxRepeats = policy.maxRepeats,
-        render = { c -> Phrases.main(c, policy) },
+        render = { c -> Phrases.main(c, policy, ask) },
     )
 
     private fun praise() = Utterance(KEY_PRAISE, Priority.INFO, 2_500, render = { c -> Phrases.praise(c.world.lang) }, speakWhen = DRIVING)
@@ -196,7 +199,7 @@ object Phrases {
         else "About ${p.leadMin} minutes to ${enDuration(p.targetMin)}. Let's rest at the next stop."
     }
 
-    fun main(c: SayCtx, p: RestPolicy): String {
+    fun main(c: SayCtx, p: RestPolicy, ask: Boolean = false): String {
         val w = c.world
         val min = w.drivingMs / 60_000L
         val eta = w.etaMs
@@ -204,12 +207,16 @@ object Phrases {
         return when (w.lang) {
             Lang.KO -> when {
                 soon -> "곧 도착이에요. 도착하면 꼭 쉬어요."
+                ask && c.repeat == 0 && c.short -> "${koDuration(p.targetMin)} 넘었어요. 쉬어 갈까요?"
+                ask && c.repeat == 0 -> "${koDuration(min)}째예요. 쉬어 갈까요?"
                 c.short -> "${koDuration(p.targetMin)} 넘었어요. 쉬어 가요."
                 c.repeat == 0 -> "${koDuration(min)}째예요. 약속대로 쉬어 가요."
                 else -> "쉬지 않고 ${koDuration(min)}째예요. 가까운 곳에 잠깐 세워요."
             }
             Lang.EN -> when {
                 soon -> "Almost there. Please rest when you arrive."
+                ask && c.repeat == 0 && c.short -> "Over ${enDuration(p.targetMin)}. Shall we take a break?"
+                ask && c.repeat == 0 -> "${enDuration(min)} now. Shall we take a break?"
                 c.short -> "Over ${enDuration(p.targetMin)}. Let's take a break."
                 c.repeat == 0 -> "${enDuration(min)} now. Let's rest as promised."
                 else -> "${enDuration(min)} without a break. Let's pull over nearby."
