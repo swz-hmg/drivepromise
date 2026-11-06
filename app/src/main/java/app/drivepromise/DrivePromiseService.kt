@@ -47,7 +47,8 @@ import kotlin.math.abs
  * 운전약속 포그라운드 서비스 — 화면과 떨어져 동작하는 ‘귀와 입’. 10 Hz로 [TripSession]을 돌리고, 어댑터(차량·내비·위치)와
  * Pleos TTS를 세션에 잇습니다. 주행 중 화면이 가려져도(DO 미인정, G1-B B1) 이 서비스는 계속 말합니다.
  *
- * 모드: REAL(실차·에뮬레이터 신호) ↔ REPLAY(assets/trips 재생, 가상 시계). 리플레이가 끝나면 15초 뒤 REAL로 돌아옴.
+ * 모드: REAL(실차·에뮬레이터 신호) ↔ REPLAY(assets/trips 재생, 가상 시계). 리플레이가 끝나면 요약·대답을 다 말한 뒤(4~45초) REAL로 돌아옴.
+ * 리플레이 중 운전자의 대답을 듣는 동안은 가상 시계가 멈춤(1.2.1 — 60배속에서 5초 듣기가 가상 5분이 되지 않게).
  * 명령(adb·화면): am start-foreground-service -n app.drivepromise/.DrivePromiseService --es cmd replay --es name hospital_home
  *   cmd=replay name=<트립> · cmd=stop_replay · cmd=plan name=<이름> --ef lat --ef lon · cmd=end · cmd=lang value=ko|en · cmd=status
  *   cmd=screen value=on|voice(주행 중 화면 설정) · cmd=assume_do value=1|0 · cmd=repeat(다시 들려줘) · cmd=mode value=parked|drive|voice|auto(디버그 빌드만, 시연 강제)
@@ -90,6 +91,7 @@ class DrivePromiseService : Service() {
     var mode = Mode.REAL
         private set
     private var backToReal: Runnable? = null
+    private var replayHeld = false
     private var lastSave = 0L
     private var carUx: PleosCarUx? = null
     private var stt: PleosStt? = null
@@ -226,6 +228,7 @@ class DrivePromiseService : Service() {
         mode = Mode.REPLAY
         val p = ReplayPlayer(trip, Clock { System.currentTimeMillis() })
         replay = p
+        replayHeld = false
         replayName = name
         val s = newSession(p.clock, forReplay = true)
         s.attachReplay(p)
@@ -281,11 +284,7 @@ class DrivePromiseService : Service() {
         return TripSession(prefs.promises(), voice!!, clock, prefs.lang, SessionPolicy(), ext, object : TripSession.Listener {
             override fun onPhase(phase: TripSession.Phase, nowMs: Long) {
                 L.log("phase", "phase" to phase, "now" to nowMs, "mode" to mode)
-                if (phase == TripSession.Phase.ENDED && mode == Mode.REPLAY) {
-                    val r = Runnable { if (mode == Mode.REPLAY) startReal() }
-                    backToReal = r
-                    main.postDelayed(r, 15_000)
-                }
+                if (phase == TripSession.Phase.ENDED && mode == Mode.REPLAY) scheduleBackToReal()
                 if (phase != TripSession.Phase.DRIVING) saveRest()
             }
 
@@ -315,11 +314,36 @@ class DrivePromiseService : Service() {
         })
     }
 
+    /**
+     * 리플레이가 끝난 뒤 실차 세션으로 돌아가기 — 1.2.1: 고정 15초가 아니라 요약·대답을 다 말하고 듣기도 끝난 뒤(최소 [BACK_MIN_MS], 최대 [BACK_MAX_MS]).
+     * 11/6 실행: 질문이 아닌 문장 뒤 듣기(12초) 때문에 요약이 밀린 채 15초가 되어 요약이 통째로 사라짐.
+     */
+    private fun scheduleBackToReal() {
+        backToReal?.let { main.removeCallbacks(it) }
+        val endedAt = System.currentTimeMillis()
+        val r = object : Runnable {
+            override fun run() {
+                if (mode != Mode.REPLAY || backToReal !== this) return
+                val s = session
+                val waited = System.currentTimeMillis() - endedAt
+                val busy = s != null && (s.pendingAfterEnd || voice?.isSpeaking == true || pendingListen != null || cueing || stt?.listening == true)
+                if (busy && waited < BACK_MAX_MS) { main.postDelayed(this, 500); return }
+                L.log("replay_back", "why" to (if (busy) "timeout" else "idle"), "waitedMs" to waited, "pending" to s?.scheduler?.pendingKeys?.joinToString("+"))
+                startReal()
+            }
+        }
+        backToReal = r
+        main.postDelayed(r, BACK_MIN_MS)
+    }
+
     private fun step() {
         val s = session ?: return
         voiceStep(s)
         val p = replay
-        if (mode == Mode.REPLAY && p != null) s.pumpReplay(p) else s.tick()
+        if (mode == Mode.REPLAY && p != null) {
+            s.pumpReplay(p)
+            if (p.held != replayHeld) { replayHeld = p.held; L.log("replay_hold", "on" to p.held, "heldMs" to p.heldMs, "phase" to s.phase) }   // 듣는 동안 가상 시계 멈춤(1.2.1)
+        } else s.tick()
         screen.update(s.phase == TripSession.Phase.DRIVING)
         val now = System.currentTimeMillis()
         if (mode == Mode.REAL && now - lastSave > 30_000) saveRest()
@@ -548,7 +572,8 @@ class DrivePromiseService : Service() {
             "s" to s?.statuses?.entries?.joinToString(",") { "${it.key}:${it.value}" }, "tts" to voice?.ready, "replay" to replayName,
             "screen" to screen.mode, "cap" to screenCapabilityText(), "ux" to uxText(),
             "loc" to locSrc?.active, "fixes" to "${locSrc?.pleosFixes ?: 0}+${locSrc?.fallbackFixes ?: 0}", "zoneP" to locSrc?.zoneInside,
-            "stt" to stt?.state, "sttErr" to stt?.lastError, "afterQ" to afterQuestion, "heard" to stt?.lastHeard?.length)
+            "stt" to stt?.state, "sttErr" to stt?.lastError, "afterQ" to afterQuestion, "heard" to stt?.lastHeard?.length,
+            "hold" to replay?.heldMs, "busyAfterEnd" to s?.pendingAfterEnd)
     }
 
     private fun startInForeground() {
@@ -575,6 +600,9 @@ class DrivePromiseService : Service() {
         const val BUTTON_WAIT_MS = 6_000L
         const val QUESTION_WAIT_MS = 2_000L
         const val CUE_MS = 250L
+        /** 리플레이가 끝난 뒤 실차 세션으로 돌아가기까지 — 최소(화면에 요약이 보이게)·최대(말·듣기가 끝나지 않아도) */
+        const val BACK_MIN_MS = 4_000L
+        const val BACK_MAX_MS = 45_000L
 
         fun start(ctx: Context) {
             ctx.startForegroundService(Intent(ctx, DrivePromiseService::class.java))

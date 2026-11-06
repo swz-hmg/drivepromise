@@ -203,12 +203,61 @@ class PleosVehicleSource(private val ctx: Context, private val main: Handler) : 
     /** 리스너로 볼 인자 — Pleos 리스너 인터페이스 또는 Kotlin 함수형 */
     private fun isListener(c: Class<*>): Boolean = c.isInterface && (c.name.startsWith("ai.pleos.") || c.name.startsWith("kotlin.jvm.functions.") || c.name.startsWith("kotlin.jvm.internal."))
 
-    /** 영역 인자 후보: 정수면 앞 유리(Pleos WindowValue 의 FRONT… 상수, 없으면 AAOS FRONT_WINDSHIELD=1), 열거형이면 FRONT/WINDSHIELD 가 든 값 */
-    private fun areaArg(c: Class<*>): Any? = when {
-        c == Int::class.javaPrimitiveType || c == Int::class.javaObjectType -> frontWindowArea()
-        c.isEnum -> c.enumConstants?.firstOrNull { e -> (e as Enum<*>).name.uppercase().let { it.contains("FRONT") || it.contains("WINDSHIELD") } } ?: c.enumConstants?.firstOrNull()
-        else -> null
+    /**
+     * 영역 인자 후보: 정수면 앞 유리(Pleos WindowValue 의 FRONT… 상수, 없으면 AAOS FRONT_WINDSHIELD=1), 열거형이면 FRONT/WINDSHIELD 가 든 값,
+     * 그 밖의 클래스면 [areaObject] — 1.2.1: 11/6 실측 모양 registerWiperState(WindowArea, WiperStateListener),
+     * 공식 문서 WindowArea(vararg values: WindowValue)(JVM 생성자는 WindowValue[]) · WindowValue 는 열거형(FRONT_WINDSHIELD …).
+     */
+    private fun areaArg(c: Class<*>): Any? {
+        val v: Any? = when {
+            c == Int::class.javaPrimitiveType || c == Int::class.javaObjectType -> frontWindowArea()
+            c.isEnum -> frontEnum(c)
+            else -> areaObject(c)
+        }
+        L.log("vsdk_area", "type" to c.name.substringAfterLast('.'), "value" to (v?.let { describe(it) } ?: "없음"))
+        return v
     }
+
+    private fun frontEnum(c: Class<*>): Any? =
+        c.enumConstants?.firstOrNull { e -> (e as Enum<*>).name.uppercase().let { it.contains("FRONT") && (it.contains("WIND") || it.contains("SHIELD")) } }
+            ?: c.enumConstants?.firstOrNull { e -> (e as Enum<*>).name.uppercase().contains("FRONT") }
+            ?: c.enumConstants?.firstOrNull()
+
+    /** 영역 객체 만들기: ① 정적 필드·companion 에 같은 타입 값(FRONT… 우선) ② 생성자(열거형 배열 = vararg · 열거형 하나 · 정수) */
+    private fun areaObject(c: Class<*>): Any? {
+        try {
+            val statics = c.fields.filter { java.lang.reflect.Modifier.isStatic(it.modifiers) && c.isAssignableFrom(it.type) }.mapNotNull { f -> runCatching { f.get(null) }.getOrNull()?.let { f.name to it } }
+            (statics.firstOrNull { it.first.uppercase().contains("FRONT") } ?: statics.firstOrNull())?.let { return it.second }
+        } catch (_: Throwable) {}
+        for (k in c.constructors.sortedBy { it.parameterTypes.size }) {
+            val p = k.parameterTypes
+            if (p.size != 1) continue
+            val t = p[0]
+            try {
+                when {
+                    t.isArray && t.componentType.isEnum -> {
+                        val one = frontEnum(t.componentType) ?: continue
+                        val arr = java.lang.reflect.Array.newInstance(t.componentType, 1)
+                        java.lang.reflect.Array.set(arr, 0, one)
+                        return k.newInstance(arr)
+                    }
+                    t.isEnum -> return k.newInstance(frontEnum(t) ?: continue)
+                    t == Int::class.javaPrimitiveType || t == Int::class.javaObjectType -> return k.newInstance(frontWindowArea())
+                }
+            } catch (e: Throwable) {
+                L.log("vsdk_area_error", "type" to c.name.substringAfterLast('.'), "ctor" to t.simpleName, "err" to (e.cause ?: e))
+            }
+        }
+        return null
+    }
+
+    private fun describe(v: Any): String = when (v) {
+        is Array<*> -> v.joinToString("+") { it.toString() }
+        else -> runCatching {   // WindowArea(values=[FRONT_WINDSHIELD]) 처럼 보이게 — values 가 배열이면 풀어서
+            val vals = v.javaClass.methods.firstOrNull { it.name == "getValues" && it.parameterTypes.isEmpty() }?.invoke(v)
+            if (vals is Array<*>) "${v.javaClass.simpleName}(${vals.joinToString("+")})" else v.toString()
+        }.getOrDefault(v.toString())
+    }.take(80)
 
     private fun frontWindowArea(): Int {
         for (cn in listOf("ai.pleos.playground.vehicle.constant.area.WindowValue", "ai.pleos.playground.vehicle.constant.area.AreaValue")) {

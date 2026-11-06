@@ -154,9 +154,9 @@ yielded(id): yields + 1, 다시 대기(다음엔 짧은 문장)
 | 시점 | 말 | 종류 |
 |---|---|---|
 | 1:50 | “10분쯤 뒤면 두 시간이에요. 다음 쉴 곳에서 쉬어 가요.” | PROMISE · UNTIL_DEADLINE(1:58까지) · 주행 중에만 |
-| 2:00 | “두 시간째예요. 약속대로 쉬어 가요.” (늦으면 그때 값: “두 시간 3분째예요…”) · 음성 인식을 쓸 수 있으면(`ask`, 1.2.0) 첫 말만 “두 시간째예요. 쉬어 갈까요?” — 끝나면 5초 듣기(8.8) | PROMISE · WHILE_STATE · 주행 중에만 |
+| 2:00 | “두 시간째예요. 약속대로 쉬어 가요.” (늦으면 그때 값: “두 시간 3분째예요…”) · 음성 인식을 쓸 수 있으면(`ask`, 1.2.0) 첫 말만 “두 시간째예요. 쉬어 갈까요?” — 끝나면 5초 듣기(8.8). 듣기 차례는 실제로 ‘?’로 끝난 문장에만(`Phrases.isQuestion`, 1.2.1) | PROMISE · WHILE_STATE · 주행 중에만 |
 | 말한 뒤 +15·+30분 | “쉬지 않고 두 시간 15분째예요. 가까운 곳에 잠깐 세워요.” | 반복 최대 2번 |
-| 도착 15분 안 | “곧 도착이에요. 도착하면 꼭 쉬어요.” | 설계 후보(G2 수용성) |
+| 도착 15분 안 | “곧 도착이에요. 도착하면 꼭 쉬어요.” — 질문이 아니므로 듣지 않음(1.2.1, S81) | 설계 후보(G2 수용성) |
 | 쉼 뒤 출발 | “잘 쉬셨어요. 약속 지키셨습니다.” | INFO, 예고·본 알림이 있었던 구간만 |
 | 쉬지 못하고 도착 | “오늘은 두 시간 40분을 쉬지 않고 운전하셨어요. 다음엔 한 시간 50분쯤 쉬어 가요.” | `endTrip()`이 돌려줌(요약 담당이 말함) |
 
@@ -212,7 +212,7 @@ yielded(id): yields + 1, 다시 대기(다음엔 짧은 문장)
 
 ## 8. 시험 (`./gradlew :core:test`)
 
-스펙 80개(S01~S41 `Specs.kt`, S42~S56·S76 `EngineSpecs.kt`, S57~S75·S77~S80 `SessionSpecs.kt`) — 같은 목록을 JUnit 5(`CoreSpecsTest`, 동적 시험)와 의존성 없는 점검 러너가 돌립니다. S72는 `demo/trips/*.json`(시연 트립 4개, 앱 assets와 같은 파일)을 읽습니다.
+스펙 82개(S01~S41 `Specs.kt`, S42~S56·S76 `EngineSpecs.kt`, S57~S75·S77~S82 `SessionSpecs.kt`) — 같은 목록을 JUnit 5(`CoreSpecsTest`, 동적 시험)와 의존성 없는 점검 러너가 돌립니다. S72는 `demo/trips/*.json`(시연 트립 4개, 앱 assets와 같은 파일)을 읽습니다.
 
 | 묶음 | 스펙 |
 |---|---|
@@ -231,6 +231,8 @@ yielded(id): yields + 1, 다시 대기(다음엔 짧은 문장)
 | 화면 모드(결정표 7경우 · 전환 규칙 히스테리시스 · 능력 판단과 차단 기억) · ‘다시 들려줘’(1회·연타 1회·침묵 구간 대기) | S73~S75 |
 | 약속 구역 경계 히스테리시스 | S76 |
 | 음성 명령: 뜻 풀이(한·영 표·조사) · 질문 뒤 듣기(질문형 문장·듣기 요청 1회·응/아니·‘다시’ 뒤 한 번 더) · 버튼(상태·조용히·도움말) · 듣는 동안 말 보류 | S77~S80 |
+| 질문일 때만 듣기(‘곧 도착’ 문장 뒤엔 듣지 않음) · 주행 끝 순간 말하던 문장은 반복 예약 없음 · 요약까지 말해야 한가함(`pendingAfterEnd`) | S81 |
+| 리플레이 멈춤(듣는 동안 가상 시계 정지)·주행 끝 뒤 실시간 · 시연 트립 ‘두 시간 쉬기’를 STT 켜고 60배속으로: 질문 → 5초 멈춤 → ‘응’ → 대답 → 도착 → 요약 2줄 | S82 |
 
 ## 8.5 약속 엔진 (`engine` · `plan` · `scene`, 11/6 작업)
 
@@ -271,6 +273,7 @@ class TripSession(promises, speaker: Speaker, clock: Clock, lang, policy: Sessio
     fun end(reason): Summary · fun plan(dest, route, departAtMs?): AutoCloseable
     fun restState()/restoreRest(State) · val phase · statuses · drivingMs · plan · summary
 class ReplayPlayer(trip: ReplayTrip, real: Clock, speedup = trip.meta.speedup)   // clock(가상) · location/vehicle/route(원천) · pump(virtualNow) · finished
+    fun hold(on: Boolean) · val held · val heldMs · fun realTimeAfterEnd()   // 1.2.1: 듣는 동안 멈춤(기울기 0) · 주행 끝 뒤 실시간(기울기 1)
 object LedgerJson { fun encode(LedgerEvent): String; fun decode(line): LedgerEvent?; fun decodeAll(text): List<LedgerEvent> }
 ```
 
@@ -284,7 +287,9 @@ object LedgerJson { fun encode(LedgerEvent): String; fun decode(line): LedgerEve
 | hardBrakeMps2 · hardBrakeHoldMs | 3.0 · 2 000 | 급제동(0.3~1.5초 전 표본과 비교) 뒤 침묵 |
 | tbtStaleMs | 60 000 | TBT 소식이 끊기면 회전 예측을 접음 |
 
-세션 상태 기계: `PARKED`(세워 둠·모름) → 차가 움직이면(기어 R·N·D 또는 속도 > 0.5 m/s) `DRIVING` → `ENDED`. 끝 조건: 도착 소식 뒤 정차(P·시동 끔) · 시동 끔 · 도착 뒤 5분 · 도착 없이 30분 정차 · 수동. 끝나면 약속 판정을 닫고(engine.endTrip) 요약 문장(쉬기 요약 · “약속 n개 중 m개를 지켰어요…”)을 세워 둔 동안 INFO로 말합니다. 반복 예약(이미 한 말의 15분 뒤 반복)은 못 전한 말로 세지 않습니다.
+세션 상태 기계: `PARKED`(세워 둠·모름) → 차가 움직이면(기어 R·N·D 또는 속도 > 0.5 m/s) `DRIVING` → `ENDED`. 끝 조건: 도착 소식 뒤 정차(P·시동 끔) · 시동 끔 · 도착 뒤 5분 · 도착 없이 30분 정차 · 수동. 끝나면 약속 판정을 닫고(engine.endTrip) 요약 문장(쉬기 요약 · “약속 n개 중 m개를 지켰어요…”)을 세워 둔 동안 INFO로 말합니다. 반복 예약(이미 한 말의 15분 뒤 반복)은 못 전한 말로 세지 않고, 주행 끝 순간 말하던 문장이 끝나도 새 반복을 걸지 않습니다(`SpeechScheduler.tripEnded`, 1.2.1).
+
+리플레이 가상 시계(1.2.1): 구간마다 기울기가 다른 직선 — 주행 중 = 배속, 듣는 동안(`TripSession.listening`) = 0, 주행이 끝난 뒤 = 1. `pumpReplay`가 `hold(listening)`·`realTimeAfterEnd()`를 부릅니다. 까닭(11/6 실행): 60배속에서 5초 듣기는 가상 5분이라 질문 뒤 장면이 사라지고, 요약 첫 줄을 말하는 4초가 가상 4분이 되어 둘째 줄이 늦은 알림 규칙(INFO 60초)에 걸려 사라짐(S82가 옛 코드에서 실패로 확인). `TripSession.pendingAfterEnd` = 끝났는데 말하는 중·듣는 중이거나 요약·대답·다시·계획이 남음 — 앱은 이것이 false가 된 뒤(최소 4초·최대 45초) 실차 세션으로 돌아갑니다.
 
 ## 8.7 화면 모드 (`ui`, 11/5 Q036 — DO 인정 가정)
 
@@ -330,7 +335,7 @@ class SpeechScheduler { var muteInfoUntilMs: Long }   // ‘조용히’ — INF
 | 대답 | 짧은 한 문장(`VoicePhrases`, 1.2~4초 추정), 앞의 대답이 남아 있으면 지우고 새로 |
 | 질문 뒤 침묵 | 아무것도 하지 않음(앱이 ‘대답 없음’으로만 기록 — Ledger에는 남기지 않음) |
 
-앱 배선(계약 밖, `app/platform/PleosStt.kt` · `DrivePromiseService`): Pleos SpeechToText 3.3.1 ON_DEVICE, 모든 호출은 리플렉션(SDK 판이 달라도 컴파일 유지, 없으면 듣기만 꺼짐). 버튼은 최대 6초, 질문 뒤는 5초 · 우리 말·내비 안내 중이면 끝날 때까지(버튼 6초·질문 2초까지) 기다림 · ‘띵’(ToneGenerator 120 ms) 250 ms 뒤 `request()` · 내비 재생기가 나타나면 `stop()` · 결과는 첫 최종(`onUpdated(…, completed=true)`) 또는 시간이 다 된 뒤 부분 결과 · 시험용 PCM 주입(`sendAudio` 3,200 B/100 ms 실시간 + 0.3초 묵음 → `completeAudioSend`, `request()` 없이).
+앱 배선(계약 밖, `app/platform/PleosStt.kt` · `DrivePromiseService`): Pleos SpeechToText 3.3.1 ON_DEVICE, 모든 호출은 리플렉션(SDK 판이 달라도 컴파일 유지, 없으면 듣기만 꺼짐). 버튼은 최대 6초, 질문 뒤는 5초 · 우리 말·내비 안내 중이면 끝날 때까지(버튼 6초·질문 2초까지) 기다림 · ‘띵’(ToneGenerator 120 ms) 250 ms 뒤 `request()` · 내비 재생기가 나타나면 `stop()` · 결과는 첫 최종(`onUpdated(…, completed=true)`) 또는 시간이 다 된 뒤 부분 결과 · 시험용 PCM 주입(`sendAudio` 3,200 B/100 ms 실시간 + 0.3초 묵음 → `completeAudioSend`, `request()` 없이 — 공식 문서: 첫 버퍼로 인식 시작, `onReady`·`onUpdatedRms` 없음). 1.2.1: 시간이 다 돼 `stop()`한 뒤 마지막 결과를 기다리는 시간 1.5 → 2.5초.
 
 ## 9. 변경 기록
 
@@ -357,6 +362,7 @@ class SpeechScheduler { var muteInfoUntilMs: Long }   // ‘조용히’ — INF
 | 제출본(11/5 Q038) | versionCode 1 · 0.1 · release 서명 없음 | **1.0.0(versionCode 2) · release는 저장소 밖 키(`~/.drivepromise/signing.properties`)로 서명, 난독화 없음 · `apk/DrivePromiseTeam_DrivePromise_release.apk` · README(심사용 4항목)·`docs/MANUAL.md`** | 공모전 제출 안내(README 필수 항목·`apk/` 경로·release APK). 코어·앱 동작 변경 없음(스펙 75개 그대로) |
 | 음성 명령(11/6 Q040) | STT는 2차 계획 | **STT C안(A 버튼 + B 물을 때만 듣기) — `voice` 패키지·`VoicePhrases`·`TripSession.voiceInput/listening/takeListenRequest/onVoice`·`SpeechScheduler.muteInfoUntilMs`·Ledger `VoiceCommand`·RestTracker 질문형 문장(`ask`)·스펙 S77~S80 · 앱 1.2.0(versionCode 4)** | 사용자 결정(C안). 늘 듣지 않음(웨이크워드 없음)·닫힌 문법·모르면 행동하지 않음 — 잘못 알아듣고 행동하는 것보다 한 번 더 묻는 쪽이 안전. STT가 없으면 1.1.0과 같은 문장·동작 |
 | 근접 알림 비교(11/6) | 알림 순간에 비교 | **알림 3초 뒤 비교 + 시간 차 `lagMs`** | 1.1.0 실측: 근접 알림이 코어보다 47~88 ms 먼저 와서 0/2 ‘불일치’로 기록됨(판단은 같았음) |
+| 11/6 실행 보정(Q041) · 앱 1.2.1(versionCode 5) | 질문 판정 = 본 알림 첫 말 · 리플레이 시계 = 배속 고정 · 실차 복귀 = 끝 15초 뒤 · 끝난 뒤 반복 예약 · 경로 취소 = 실패 · 계획 오류 문장에 코드 | **질문 판정 = ‘?’로 끝난 문장(`Phrases.isQuestion`) · 리플레이 시계 = 듣는 동안 멈춤·끝난 뒤 실시간(`hold`·`realTimeAfterEnd`) · 실차 복귀 = 할 말이 끝난 뒤(`pendingAfterEnd`, 4~45초) · `tripEnded` 뒤 반복 없음 · 요청 뒤 3초 안 취소 = 앞 경로 바뀜(새 경로 15초 기다림) · 오류 코드는 말하지 않음 · 스펙 S81·S82 · 와이퍼 `WindowArea(FRONT_WINDSHIELD)`+`CAR_WINDOWS` · 시연 트립 rest_two_hours v0.2(ETA 15:18 · 2:13:20 도착)** | 11/6 에뮬레이터 실행(run_1106_094037): ‘곧 도착’ 문장 뒤 12초 듣는 사이 15초 복귀가 요약을 끊음(요약 0/2) · 60배속 요약 둘째 줄 소실(S82로 발견) · `onRouteCancelled` 139 ms 뒤 새 경로 5.8초 뒤 · `registerWiperState(WindowArea, …)` 영역 인자를 못 만듦. 음성 시험 실패는 앱이 아닌 실행 스크립트(adb가 반복문 입력을 먹어 0.19초만 주입) |
 | 위치(11/5 Q039) | LocationManager(fused/gps) | **Pleos FusedLocation 1.1.3 주 · LocationManager 대체 · 약속 구역 근접 알림 이중 확인(기록만) · 경계 히스테리시스 `zoneBackM` 100 m(S76) · 앱 1.1.0(versionCode 3)** | 실제 위치를 Pleos SDK에서 받고(기술 활용), 플랫폼 근접 알림으로 구역 판정을 한 번 더 확인. 히스테리시스가 없으면 경계에 선 채 GPS가 ±30 m 흔들릴 때 ‘돌아왔어요/밖이에요’를 되풀이함(S76이 옛 코드에서 실패로 확인) |
 
 ## 10. 다음(이 계약 위에)

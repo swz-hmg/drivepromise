@@ -134,7 +134,9 @@ object PreTripPlanner {
             else "Even now you arrive ${PromisePhrases.enClock(arr, z)}, after sunset (${PromisePhrases.enClock(ss, z)}). Consider another day or a companion."
         }
 
+    /** 11/6(1.2.1): 오류 코드(ROUTE_CANCELLED 등)는 말하지 않음 — TTS가 영어로 읽어 시니어에게 뜻이 없음. 코드는 [Plan.error]·기록에만 */
+    @Suppress("UNUSED_PARAMETER")
     private fun noRoute(lang: Lang, err: String?) =
-        if (lang == Lang.KO) "경로를 받지 못했어요${err?.let { "($it)" } ?: ""}. 인터넷을 확인하고 다시 시도해요."
-        else "No route received${err?.let { " ($it)" } ?: ""}. Check the connection and try again."
+        if (lang == Lang.KO) "경로를 받지 못했어요. 인터넷을 확인하고 다시 시도해요."
+        else "No route received. Check the connection and try again."
 }

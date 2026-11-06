@@ -78,14 +78,18 @@ class SpeechScheduler(
         return Step.Idle
     }
 
-    /** 말이 끝까지 나감 → 반복이 있으면 repeatAfterMs 뒤로 예약 */
+    /** 말이 끝까지 나감 → 반복이 있으면 repeatAfterMs 뒤로 예약(주행이 끝난 뒤 끝난 말은 반복하지 않음 — 11/6 1.2.1) */
     fun spoken(id: Long, nowMs: Long) {
         val p = speaking?.takeIf { it.id == id } ?: return
         speaking = null
         ledger.accept(LedgerEvent.Spoken(p.startedAt, p.u.key, p.repeat, p.yields, nowMs, p.u.deadlineAtMs?.let { p.startedAt - it }))
         val ra = p.u.repeatAfterMs
-        if (ra != null && p.repeat < p.u.maxRepeats) queue += Pending(nextId++, p.u, nowMs, nowMs + ra, p.repeat + 1)
+        if (!tripEnded && ra != null && p.repeat < p.u.maxRepeats) queue += Pending(nextId++, p.u, nowMs, nowMs + ra, p.repeat + 1)
     }
+
+    /** [endTrip] 뒤면 true — 그 뒤엔 반복을 예약하지 않음 */
+    var tripEnded = false
+        private set
 
     /** 내비에 물러섬(VoiceArbiter의 Yield) — 같은 말을 대기열로 되돌림(다음엔 짧은 문장) */
     fun yielded(id: Long, nowMs: Long) {
@@ -111,6 +115,7 @@ class SpeechScheduler(
 
     /** 주행 끝(도착·긴 정차) — 남은 약속·정보 말은 요약으로, 안전 말과 ‘이미 한 말의 반복 예약’은 버림(11/5: 반복은 못 전한 말이 아님) */
     fun endTrip(nowMs: Long) {
+        tripEnded = true   // 11/6: 주행 끝 순간 말하던 문장(예: 쉬기 본 알림)이 끝나도 15분 뒤 반복을 걸지 않게
         for (p in ordered()) {
             queue.remove(p)
             if (p.u.priority == Priority.SAFETY || p.repeat > 0) {

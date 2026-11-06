@@ -32,6 +32,7 @@ class PleosRouteSource(private val ctx: Context, private val main: Handler) : Ro
     private var listener: NaviHelperEventListener? = null
     private var planDone: Sink<RoutePlans>? = null
     private var planTimeout: Runnable? = null
+    private var planReqAt = 0L
     private var lastSpeedLimit: Int? = null
     private var inited = false
     private val lastArgs = HashMap<String, String>()
@@ -110,7 +111,21 @@ class PleosRouteSource(private val ctx: Context, private val main: Handler) : Ro
             }
             m.contains("Arriv", ignoreCase = true) || m.contains("Destination", ignoreCase = true) && s.contains("ARRIV", ignoreCase = true) -> emit(NaviEvent.Arrived(now))
             m == "onNavigationStatus" -> if (s.contains("ARRIV", ignoreCase = true)) emit(NaviEvent.Arrived(now))
-            m == "onRouteCancelled" -> { emit(NaviEvent.RouteError(now, "ROUTE_CANCELLED")); finishPlan(RoutePlans(emptyMap(), "ROUTE_CANCELLED")) }
+            m == "onRouteCancelled" -> {
+                val after = now - planReqAt
+                if (planDone != null && after in 0 until REPLACED_GRACE_MS) {
+                    // 1.2.1: 안내 중인 경로가 있을 때 새 requestRoute를 하면 먼저 ‘앞 경로 취소’가 옴(11/6 실행: 139 ms 뒤 취소 → 5.8초 뒤 새 경로 시작).
+                    // 이것을 실패로 끝내지 않고 새 경로(onRouteStarted)를 조금 더 기다림 — 안 오면 그때 취소로 끝냄
+                    L.log("route_replaced", "afterMs" to after, "waitMs" to AFTER_CANCEL_WAIT_MS)
+                    planTimeout?.let { main.removeCallbacks(it) }
+                    val to = Runnable { finishPlan(RoutePlans(emptyMap(), "ROUTE_CANCELLED")) }
+                    planTimeout = to
+                    main.postDelayed(to, AFTER_CANCEL_WAIT_MS)
+                } else {
+                    emit(NaviEvent.RouteError(now, "ROUTE_CANCELLED"))
+                    finishPlan(RoutePlans(emptyMap(), "ROUTE_CANCELLED"))
+                }
+            }
             m == "onError" -> {
                 val cause = Reflect.word(s, "cause") ?: Reflect.word(s, "code") ?: s.take(60).ifEmpty { "UNKNOWN" }
                 emit(NaviEvent.RouteError(now, cause))
@@ -131,6 +146,7 @@ class PleosRouteSource(private val ctx: Context, private val main: Handler) : Ro
         }
         planDone?.let { finishPlan(RoutePlans(emptyMap(), "REPLACED")) }
         planDone = done
+        planReqAt = System.currentTimeMillis()
         val to = Runnable { finishPlan(RoutePlans(emptyMap(), "TIMEOUT_30S")) }
         planTimeout = to
         main.postDelayed(to, 30_000)
@@ -153,6 +169,11 @@ class PleosRouteSource(private val ctx: Context, private val main: Handler) : Ro
     }
 
     companion object {
+        /** requestRoute 뒤 이 시간 안의 onRouteCancelled 는 ‘앞 경로가 새 요청으로 바뀜’으로 봄(실패로 끝내지 않음) */
+        const val REPLACED_GRACE_MS = 3_000L
+        /** 그때 새 경로 시작을 더 기다리는 시간 — 넘으면 ROUTE_CANCELLED 로 끝냄(11/6 실측: 5.8초 뒤 시작) */
+        const val AFTER_CANCEL_WAIT_MS = 15_000L
+
         /** NaviHelper TBT type 이름 → 코어 회전 종류(이름에 든 말로 판단 — 버전마다 상수가 조금 달라도 동작) */
         fun turnOf(type: String): TurnType {
             val t = type.uppercase()

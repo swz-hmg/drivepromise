@@ -5,6 +5,8 @@
 // 1.2.0(11/6): 음성 명령 — Pleos SpeechToText 3.3.1(ON_DEVICE). ‘말하기’ 버튼(A) + 쉬기 질문 뒤 5초(B)만 들음.
 //   STT 호출은 모두 리플렉션이라 SDK 판이 달라도 컴파일은 깨지지 않음. 의존성을 못 받는 환경에선 -PdpStt=false 로 빼고 빌드(앱은 1.1.0처럼 동작).
 //   파일이 없으면 서명 없는 release(app-release-unsigned.apk)가 나오며, 제출 스크립트가 처음 한 번 전용 키를 만들어 줌.
+// 1.2.1(11/6 실행 보정): 질문 아닌 본 알림 뒤엔 듣지 않음 · 리플레이 중 듣는 동안 가상 시계 멈춤 · 주행 끝 뒤 요약을 끝까지 ·
+//   경로 바뀜 취소(onRouteCancelled) 무시 · 주행 화면 문장 기록 · 와이퍼 WindowArea 영역 · 오류 코드는 말하지 않음.
 import java.io.File
 import java.util.Properties
 
@@ -29,8 +31,8 @@ android {
         applicationId = "app.drivepromise"
         minSdk = 33
         targetSdk = 35
-        versionCode = 4
-        versionName = "1.2.0"   // 공모전 1차 제출본(11/15) — Pleos FusedLocation + SpeechToText(음성 명령) 적용
+        versionCode = 5
+        versionName = "1.2.1"   // 공모전 1차 제출본(11/15) — Pleos FusedLocation + SpeechToText(음성 명령) 적용, 11/6 실행 결과 보정
     }
 
     signingConfigs {

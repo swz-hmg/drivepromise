@@ -18,6 +18,8 @@
     <uses-permission android:name="pleos.car.permission.CAR_SPEED" />
     <uses-permission android:name="pleos.car.permission.CAR_INFO" />
     <uses-permission android:name="pleos.car.permission.CAR_POWERTRAIN" />
+    <!-- 1.2.1: 와이퍼(Wiper.registerWiperState(WindowArea, …)) — 공식 문서 권한 CAR_WINDOWS(보호 수준 normal, 설치 때 자동 허용) -->
+    <uses-permission android:name="pleos.car.permission.CAR_WINDOWS" />
     <uses-permission android:name="pleos.car.permission.NAVI_ROUTE" />
     <uses-permission android:name="pleos.car.permission.NAVI_ROUTE_SEARCH" />
     <!-- Pleos TextToSpeech SDK(ON_DEVICE) — 초기화·리스너·발화 모두 이 권한 필요(G1-B v0.6 확인) -->

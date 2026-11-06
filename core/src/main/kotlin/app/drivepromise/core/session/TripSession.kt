@@ -16,6 +16,7 @@ import app.drivepromise.core.model.PromiseStatus
 import app.drivepromise.core.model.VehicleSnapshot
 import app.drivepromise.core.plan.PreTripPlanner
 import app.drivepromise.core.replay.ReplayPlayer
+import app.drivepromise.core.rest.Phrases
 import app.drivepromise.core.rest.RestTracker
 import app.drivepromise.core.scene.SummaryPhrases
 import app.drivepromise.core.scene.VoicePhrases
@@ -232,7 +233,8 @@ class TripSession(
         val step = if (listening) voice.scheduler.tick(w, false) else voice.tick(w)   // 듣는 동안은 새 말을 시작하지 않음(정리만)
         if (step is Step.Speak) {
             lastSpoken = step; lastSpokenAtMs = now
-            if (voiceInput && step.key == RestTracker.KEY_MAIN && step.repeat == 0) { questionSpeakId = step.id; questionKey = step.key; questionEndMs = null; questionRepeats = 0 }
+            // 질문으로 말한 경우에만 듣기 차례를 엶 — ‘곧 도착이에요. 도착하면 꼭 쉬어요.’처럼 질문이 아닌 본 알림 뒤에는 듣지 않음(11/6 실행에서 발견, 1.2.1)
+            if (voiceInput && step.key == RestTracker.KEY_MAIN && step.repeat == 0 && Phrases.isQuestion(step.text)) { questionSpeakId = step.id; questionKey = step.key; questionEndMs = null; questionRepeats = 0 }
             else if (step.key == "repeat" && repeatIsQuestion) { questionSpeakId = step.id; repeatIsQuestion = false }
             listener.onSpeak(step, now)
         }
@@ -244,11 +246,16 @@ class TripSession(
         return step
     }
 
-    /** 리플레이 한 걸음: 가상 시각까지의 이벤트를 넣고 tick, 끝나면 주행 끝 */
+    /**
+     * 리플레이 한 걸음: 가상 시각까지의 이벤트를 넣고 tick, 끝나면 주행 끝.
+     * 1.2.1: 듣는 동안([listening])은 가상 시계를 세우고, 주행이 끝나면 실시간(1배)으로 — 요약·대답이 배속에 밀려 사라지지 않게.
+     */
     fun pumpReplay(p: ReplayPlayer): Step {
+        p.hold(listening)
         p.pump(clock.nowMs())
         val s = tick()
         if (p.finished && phase != Phase.ENDED) end("replay_end")
+        if (phase == Phase.ENDED) p.realTimeAfterEnd()
         return s
     }
 
@@ -400,6 +407,15 @@ class TripSession(
         scheduler.cancel("voice.", now, "replaced")
         scheduler.submit(Utterance("voice.$k", Priority.INFO, estMs = (300L * text.length).coerceIn(1_200L, 4_000L), render = { text }), now)
     }
+
+    /**
+     * 주행이 끝났는데 아직 들려줄 말이 남았는가 — 말하는 중이거나, 요약(summary.*)·음성 대답(voice.*)·다시 들려줘(repeat)·계획(plan)이 대기 중.
+     * 앱은 리플레이가 끝난 뒤 이것이 false가 될 때까지 실차 세션으로 돌아가지 않음(11/6: 고정 15초 뒤 돌아가며 요약을 끊던 문제, 1.2.1).
+     * 주행 중에만 말하는 약속 문장(speakWhen=주행 중)은 세운 뒤 나갈 수 없으므로 세지 않음.
+     */
+    val pendingAfterEnd: Boolean
+        get() = phase == Phase.ENDED && (scheduler.speakingKey != null || listening ||
+            scheduler.pendingKeys.any { it.startsWith("summary.") || it.startsWith("voice.") || it == "repeat" || it == "plan" })
 
     fun restState(): RestTracker.State = rest.state()
     fun restoreRest(s: RestTracker.State) = rest.restore(s, clock.nowMs())

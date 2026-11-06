@@ -46,6 +46,7 @@ class DriveActivity : Activity() {
     private lateinit var hint: TextView
     private var repeatFlashUntil = 0L
     private var lastModeLogged: PresentationMode? = null
+    private var lastShown: String? = null
     private val refresh = object : Runnable {
         override fun run() {
             render()
@@ -197,7 +198,12 @@ class DriveActivity : Activity() {
             ses.phase == TripSession.Phase.DRIVING -> if (lang == Lang.KO) "약속 ${onTrack}개 지키는 중이에요" else "$onTrack promises on track"
             else -> if (lang == Lang.KO) "출발하면 약속을 지켜 드릴게요" else "Promises start with the trip"
         }
-        nowCard.text = (if (fresh) last!!.text else fallback).take(maxLen)
+        val shown = (if (fresh) last!!.text else fallback).take(maxLen)
+        if (shown != lastShown) {   // 1.2.1: 화면에 실제로 띄운 문장을 기록 — 판정이 화면 덤프(창이 여럿이면 내비 창을 잡음, 11/6) 대신 이 줄을 봄
+            lastShown = shown
+            L.log("screen", "s" to "drive_text", "fresh" to fresh, "mode" to screenMode, "text" to shown)
+        }
+        nowCard.text = shown
         nowCard.setTextColor(if (fresh) Color.WHITE else SUB)
         if (System.currentTimeMillis() > repeatFlashUntil) repeatBtn.text = if (lang == Lang.KO) "다시 들려줘" else "Say it again"
         repeatBtn.isEnabled = last != null

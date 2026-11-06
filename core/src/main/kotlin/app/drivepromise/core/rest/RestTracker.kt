@@ -224,6 +224,9 @@ object Phrases {
         }
     }
 
+    /** 이 문장이 대답을 기다리는 질문인가(KO·EN 모두 ‘?’로 끝남) — 세션이 질문일 때만 듣기 차례를 엶(1.2.1) */
+    fun isQuestion(text: String): Boolean = text.trimEnd().endsWith("?")
+
     fun praise(lang: Lang): String = when (lang) {
         Lang.KO -> "잘 쉬셨어요. 약속 지키셨습니다."
         Lang.EN -> "Well rested — promise kept."

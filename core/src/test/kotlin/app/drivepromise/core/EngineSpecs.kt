@@ -328,7 +328,7 @@ private fun s55() {
     val out = PreTripPlanner.plan(PreTripPlanner.Input(kst(2026, 11, 14, 15, 0), SEOUL_LAT, SEOUL_LON, RoutePlans(emptyMap(), "CAUSE_SEARCH_ROUTE"), listOf(Promise.HomeBeforeDark())))
     eq(out.choice, null, "선택 없음")
     eq(out.error, "CAUSE_SEARCH_ROUTE", "오류")
-    eq(out.lines, listOf("경로를 받지 못했어요(CAUSE_SEARCH_ROUTE). 인터넷을 확인하고 다시 시도해요."), "문장")
+    eq(out.lines, listOf("경로를 받지 못했어요. 인터넷을 확인하고 다시 시도해요."), "문장(오류 코드는 말하지 않음 — 1.2.1)")
 }
 
 private fun s56() {

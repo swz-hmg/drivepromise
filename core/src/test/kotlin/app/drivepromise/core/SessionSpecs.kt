@@ -13,6 +13,7 @@ import app.drivepromise.core.model.VehicleSnapshot
 import app.drivepromise.core.plan.PreTripPlanner
 import app.drivepromise.core.replay.ReplayParser
 import app.drivepromise.core.replay.ReplayPlayer
+import app.drivepromise.core.rest.Phrases
 import app.drivepromise.core.rest.RestTracker
 import app.drivepromise.core.session.SessionPolicy
 import app.drivepromise.core.session.TripSession
@@ -68,6 +69,8 @@ object SessionSpecs {
         "S78 음성 질문(B) — STT가 있으면 2시간 본 알림이 질문, 끝나면 듣기 요청 한 번 · 응/아니 대답과 기록 · ‘다시’는 질문을 다시 들려주고 한 번 더 들음" to ::s78,
         "S79 음성 버튼(A) — ‘약속 알려 줘’는 위험한 약속만 이름, ‘조용히’는 INFO만 10분 미룸(약속 경고·다시·대답은 그대로), 질문 없는 응/아니는 도움말" to ::s79,
         "S80 듣는 동안 — 새 말을 시작하지 않고(마이크가 우리 목소리를 듣지 않게) 끝나면 이어 말함 · 같은 질문에서 ‘다시’ 뒤 다시 듣기는 한 번만" to ::s80,
+        "S81 질문 판정 — 도착 15분 안 본 알림(‘곧 도착이에요…’)은 질문이 아니라 듣지 않음 · 질문형일 때만 듣기 요청 · 주행 끝 순간 말하던 문장은 반복을 예약하지 않음(11/6 실행)" to ::s81,
+        "S82 리플레이 멈춤 — 듣는 동안 가상 시계가 섬 · 시연 트립 ‘두 시간 쉬기’를 STT 켜고 60배속으로: 질문 → 5초 듣는 동안 트립 멈춤 → ‘응’ → 대답 → 도착 → 요약 2줄 말한 뒤에야 끝(11/6 실행)" to ::s82,
     )
 }
 
@@ -475,22 +478,25 @@ private fun demoRun(json: String, promises: List<Promise> = FIVE): Pair<List<Sai
     return said to ses
 }
 
+private fun demoDir(): File =
+    listOf("demo/trips", "../demo/trips", "../../demo/trips").map { File(it) }.firstOrNull { it.isDirectory } ?: fail("demo/trips 폴더를 찾지 못함(작업 폴더 ${File(".").absolutePath})")
+
 private fun s72() {
-    val dir = listOf("demo/trips", "../demo/trips", "../../demo/trips").map { File(it) }.firstOrNull { it.isDirectory } ?: fail("demo/trips 폴더를 찾지 못함(작업 폴더 ${File(".").absolutePath})")
-    fun load(n: String) = File(dir, "$n.json").readText()
+    fun load(n: String) = File(demoDir(), "$n.json").readText()
     // 1) 병원→집: 출발 때 해 지기 전 경고, 17:22 전 도착 → 모두 지킴
     val (a, sa) = demoRun(load("hospital_home"))
     eq(a.map { it.key }.filterNot { it.startsWith("summary") }, listOf("dark.risk"), "병원→집 발화")
     eq(sa.summary!!.statuses.values.toSet(), setOf(PromiseStatus.KEPT), "병원→집 판정 ${sa.summary!!.statuses}")
     eq(sa.summary!!.lines, listOf("오늘 약속 5개를 모두 지켰어요. 수고하셨어요."), "병원→집 요약")
     eq(sa.summary!!.reason, "arrived", "병원→집 끝 이유")
-    // 2) 두 시간 쉬기: 1:50 예고 → 2:00 본 알림 → 2:02 도착 → 쉬기 요약 + 약속 요약
+    // 2) 두 시간 쉬기(트립 v0.2, 11/6): 1:50 예고 → 2:00 본 알림(도착까지 18분이라 ‘곧 도착’ 문장이 아님) → 2:13:20 도착(15분 반복 전) → 쉬기 요약 + 약속 요약
     val (b, sb) = demoRun(load("rest_two_hours"))
     eq(b.map { it.key }.filterNot { it.startsWith("summary") }, listOf("rest.headsup", "rest.main"), "두 시간 쉬기 발화 ${b.map { it.key + "@" + it.t / 1000 }}")
     ok(b[0].t in 6_600_000L..6_606_000L && b[1].t in 7_200_000L..7_206_000L, "예고 1:50·본 알림 2:00: ${b.map { it.t / 1000 }}")
     eq(sb.summary!!.statuses["rest"], PromiseStatus.MISSED, "쉬기 못 지킴")
     eq(sb.summary!!.statuses.filterKeys { it != "rest" }.values.toSet(), setOf(PromiseStatus.KEPT), "나머지 지킴 ${sb.summary!!.statuses}")
-    eq(sb.summary!!.lines, listOf("오늘은 두 시간 2분을 쉬지 않고 운전하셨어요. 다음엔 한 시간 50분쯤 쉬어 가요.", "약속 5개 중 4개를 지켰어요. 다음엔 2시간마다 쉬기도 같이 지켜요."), "두 시간 쉬기 요약")
+    eq(b[1].text, "두 시간째예요. 약속대로 쉬어 가요.", "STT 없으면 질문 아닌 본 알림(도착까지 18분 — ‘곧 도착’ 아님)")
+    eq(sb.summary!!.lines, listOf("오늘은 두 시간 13분을 쉬지 않고 운전하셨어요. 다음엔 한 시간 50분쯤 쉬어 가요.", "약속 5개 중 4개를 지켰어요. 다음엔 2시간마다 쉬기도 같이 지켜요."), "두 시간 쉬기 요약")
     // 3) 약속 구역 경계: 예고 → 밖 → 돌아옴, 주행 끝은 못 지킴
     val (c, sc) = demoRun(load("zone_edge"))
     eq(c.map { it.key }.filterNot { it.startsWith("summary") }, listOf("zone.edge", "zone.out", "zone.back"), "구역 발화 ${c.map { it.key + "@" + it.t / 1000 }}")
@@ -716,4 +722,107 @@ private fun s80() {
     var third: ListenTrigger? = null
     q.run(78_000) { if (third == null) third = q.ses.takeListenRequest() }
     eq(third, null, "같은 질문에서 두 번째 ‘다시’ 뒤엔 더 듣지 않음")
+}
+
+// ---------------------------------------------------------------- S81~S82 (11/6 Q041: 실행 결과 보정 — 질문 판정·리플레이 멈춤·주행 끝 뒤 반복)
+private fun s81() {
+    // 1) 도착 15분 안: 본 알림은 ‘곧 도착이에요…’(질문 아님) → 듣기 요청 없음(11/6 실행: 이 문장 뒤에 5초 들으며 요약이 밀림)
+    val soon = SessionRig(listOf(Promise.RestEvery(120)))
+    soon.ses.voiceInput = true
+    soon.ses.restoreRest(RestTracker.State(119 * MIN, T0, true, false))
+    soon.ses.onFix(seoul(T0)); soon.ses.onVehicle(drive(T0))
+    soon.ses.onNavi(NaviEvent.Trip(T0, T0 + 10 * MIN, 8_000))   // 10분 뒤 도착
+    var req: ListenTrigger? = null
+    soon.run(70_000) { if (req == null) req = soon.ses.takeListenRequest() }
+    eq(soon.log.map { it.text }, listOf("곧 도착이에요. 도착하면 꼭 쉬어요."), "도착 15분 안 본 알림")
+    eq(req, null, "질문이 아니면 듣기 요청 없음")
+    // 2) 도착까지 멀면 질문 → 듣기 요청(S78과 같음)
+    val far = SessionRig(listOf(Promise.RestEvery(120)))
+    far.ses.voiceInput = true
+    far.ses.restoreRest(RestTracker.State(119 * MIN, T0, true, false))
+    far.ses.onFix(seoul(T0)); far.ses.onVehicle(drive(T0))
+    far.ses.onNavi(NaviEvent.Trip(T0, T0 + 40 * MIN, 30_000))
+    var req2: ListenTrigger? = null
+    far.run(70_000) { if (req2 == null) req2 = far.ses.takeListenRequest() }
+    eq(far.log.map { it.text }, listOf("두 시간째예요. 쉬어 갈까요?"), "도착까지 40분 — 질문")
+    eq(req2, ListenTrigger.QUESTION, "질문이면 듣기 요청")
+    ok(Phrases.isQuestion("Shall we take a break? ") && !Phrases.isQuestion("Almost there. Please rest when you arrive."), "영어 문장 질문 판정")
+    // 3) 주행 끝 순간 말하던 본 알림이 끝나도 15분 반복을 예약하지 않음(11/6 실행: 끝난 뒤 반복이 대기열에 남음)
+    val e = SessionRig(listOf(Promise.RestEvery(120)))
+    e.ses.restoreRest(RestTracker.State(119 * MIN, T0, true, false))
+    e.ses.onFix(seoul(T0)); e.ses.onVehicle(drive(T0))
+    e.run(61_000)
+    eq(e.ses.scheduler.speakingKey, "rest.main", "본 알림을 말하는 중")
+    e.ses.end("manual")
+    ok(e.ses.pendingAfterEnd, "끝났지만 말하는 중·요약 대기 → 아직 바쁨")
+    e.ses.onVehicle(PARK.copy(tMillis = e.clock.t))
+    e.run(90_000)
+    ok("rest.main" !in e.ses.scheduler.pendingKeys, "끝난 뒤 반복 예약 없음: ${e.ses.scheduler.pendingKeys}")
+    ok(e.keys().count { it.startsWith("summary.") } == 2, "세운 뒤 요약 2줄: ${e.keys()}")
+    ok(!e.ses.pendingAfterEnd, "요약까지 말하면 한가함")
+    ok(e.ses.memory.events.any { it is LedgerEvent.Spoken && it.key == "rest.main" }, "본 알림은 끝까지 말함")
+}
+
+private fun s82() {
+    val trip = ReplayParser.parse(File(demoDir(), "rest_two_hours.json").readText())
+    val base = trip.meta.baseEpochMs
+    // 1) 재생기 멈춤 — 듣는 동안 가상 시계가 섬(60배속: 실시간 1초 = 가상 1분)
+    val real = FakeClock(0L)
+    val p = ReplayPlayer(trip, real, speedup = 60.0)
+    real.t = 1_000
+    eq(p.clock.nowMs() - base, 60_000L, "1초 = 가상 1분")
+    p.hold(true); real.t = 6_000
+    eq(p.clock.nowMs() - base, 60_000L, "멈춘 5초 동안 가상 시각 그대로")
+    ok(p.held, "멈춤 상태")
+    p.hold(true); real.t = 6_500
+    eq(p.clock.nowMs() - base, 60_000L, "같은 값으로 다시 불러도 그대로")
+    p.hold(false); real.t = 7_500
+    eq(p.clock.nowMs() - base, 120_000L, "다시 흐름(멈춘 5.5초는 뺌)")
+    eq(p.heldMs, 5_500L, "멈춘 시간 합")
+    // 2) 시연 트립을 앱처럼(실시간 100 ms · 60배속 · STT 켬) 끝까지 — 질문 뒤 5초 듣는 동안 트립이 멈추고, ‘응’ 뒤 이어서 도착·요약
+    val real2 = FakeClock(0L)
+    val p2 = ReplayPlayer(trip, real2, speedup = 60.0)
+    val said = mutableListOf<Said>()
+    val ses = TripSession(FIVE, FakeSpeaker(), p2.clock, listener = object : TripSession.Listener {
+        override fun onSpeak(step: Step.Speak, nowMs: Long) { said += Said(nowMs - base, step.key, step.text, step.short, step.repeat, step.attempt) }
+    })
+    ses.voiceInput = true
+    ses.attachReplay(p2)
+    var cur: Step.Speak? = null
+    var endAt = 0L
+    var listenUntil = -1L
+    var vAtListen = 0L
+    var frozen = true
+    var listens = 0
+    var n = 0
+    while (n < 4_000) {   // 실시간 400초 한도(트립 8,003초 ÷ 60 ≈ 134초 + 듣기·말)
+        val c = cur
+        if (c != null && real2.t >= endAt) { ses.onSpeechDone(c.id); cur = null }
+        ses.takeListenRequest()?.let { t -> if (t == ListenTrigger.QUESTION) { listens++; ses.listening = true; listenUntil = real2.t + 5_000; vAtListen = p2.clock.nowMs() } }
+        if (listenUntil >= 0 && real2.t >= listenUntil) {
+            if (p2.clock.nowMs() != vAtListen) frozen = false
+            eq(ses.onVoice("응", ListenTrigger.QUESTION), VoiceIntent.YES, "대답 ‘응’")
+            ses.listening = false
+            listenUntil = -1
+        }
+        val s = ses.pumpReplay(p2)
+        if (s is Step.Speak) { cur = s; endAt = real2.t + s.estMs }
+        if (ses.phase == TripSession.Phase.ENDED && cur == null && !ses.pendingAfterEnd) break
+        real2.t += 100
+        n++
+    }
+    ok(n < 4_000, "트립이 끝나고 할 말을 다 함(${n / 10}초)")
+    eq(listens, 1, "질문 뒤 듣기 한 번")
+    ok(frozen, "듣는 5초 동안 가상 시각 그대로(60배속이면 5분이 흐를 뻔)")
+    val keys = said.map { it.key }
+    eq(keys.filterNot { it.startsWith("summary") }, listOf("rest.headsup", "rest.main", "voice.yes"), "발화 열 ${said.map { it.key + "@" + it.t / 1000 }}")
+    eq(said[1].text, "두 시간째예요. 쉬어 갈까요?", "질문형 본 알림(도착까지 18분)")
+    eq(said[2].text, "좋아요. 다음 쉴 곳에서 쉬어요.", "응 → 대답")
+    eq(keys.filter { it.startsWith("summary") }, listOf("summary.0", "summary.1"), "요약 2줄을 말함")
+    eq(ses.summary!!.lines[0], "오늘은 두 시간 13분을 쉬지 않고 운전하셨어요. 다음엔 한 시간 50분쯤 쉬어 가요.", "쉬기 요약")
+    eq(ses.summary!!.statuses["rest"], PromiseStatus.MISSED, "쉬기 못 지킴(대답은 의향일 뿐 — 실제로 쉬지 않음)")
+    eq(ses.summary!!.reason, "arrived", "도착 뒤 정차로 끝")
+    val vc = ses.memory.events.filterIsInstance<LedgerEvent.VoiceCommand>()
+    eq(vc.map { Triple(it.trigger, it.intent, it.question) }, listOf(Triple("QUESTION", "YES", "rest.main")), "기록: 뜻과 질문만")
+    ok(p2.heldMs in 4_900L..5_200L, "멈춘 시간 ≈ 5초: ${p2.heldMs}")
 }

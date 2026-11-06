@@ -1,6 +1,6 @@
 # 운전약속(DrivePromise) 기동·재기동·운영 매뉴얼
 
-대상: 심사·시연·개발에서 Pleos Connect 에뮬레이터로 앱을 실행하는 사람. 버전 1.2.0(versionCode 4) 기준 — 위치는 Pleos FusedLocation SDK(안 되면 LocationManager 자동 전환), 음성 명령은 Pleos SpeechToText SDK(ON_DEVICE, 안 되면 버튼만).
+대상: 심사·시연·개발에서 Pleos Connect 에뮬레이터로 앱을 실행하는 사람. 버전 1.2.1(versionCode 5) 기준 — 위치는 Pleos FusedLocation SDK(안 되면 LocationManager 자동 전환), 음성 명령은 Pleos SpeechToText SDK(ON_DEVICE, 안 되면 버튼만).
 
 ## 0. 한눈에
 
@@ -102,11 +102,13 @@ adb forward tcp:8088 tcp:8088 && open http://127.0.0.1:8088/
 | 트립 | 명령 | 길이 | 기대 발화(순서) | 끝 요약 |
 |---|---|---|---|---|
 | hospital_home | `--es cmd replay --es name hospital_home` | 약 50초 | 해 지기 전 도착 위험 | 약속 결과 + 수고 인사 |
-| rest_two_hours | `... --es name rest_two_hours` | 약 2분 | 두 시간 예고 → “쉬어 갈까요?”(음성 인식이 되면 질문 + 5초 듣기) | 2시간마다 쉬기 놓침 |
+| rest_two_hours | `... --es name rest_two_hours` | 약 2분 15초 | 두 시간 예고 → “두 시간째예요. 쉬어 갈까요?”(음성 인식이 되면 질문 + 5초 듣기, 듣는 동안 재생 멈춤) → 2시간 13분 도착 | 2시간마다 쉬기 놓침(요약 두 줄) |
 | zone_edge | `... --es name zone_edge` | 약 1분 40초 | 구역 끝 → 구역 밖 → 돌아옴 | 약속 구역 놓침 |
 | highway_rain | `... --es name highway_rain` | 약 2분 20초 | 고속도로 진입 → 비 시작 → 빗길 과속 | 고속도로·비 놓침 |
 
 주행이 시작되면 주행 화면이 뜹니다(정차 화면이 앞에 있을 때). 주행 화면은 모드가 바뀌면(세움·음성만) 스스로 닫힙니다.
+
+1.2.1: 리플레이 중 운전자의 대답을 듣는 동안은 재생 시계가 멈추고(`replay_hold on/off`), 주행이 끝나면 요약을 끝까지 말한 뒤 실차 모드로 돌아옵니다(최소 4초·최대 45초, `replay_back why=idle|timeout`). 화면에 띄운 문장은 `screen s=drive_text`로 남습니다.
 
 ### 3-2. 설정
 
@@ -123,11 +125,13 @@ adb forward tcp:8088 tcp:8088 && open http://127.0.0.1:8088/
 
 ### 3-3. 출발 전 계획
 
-정차 화면 **경로 계획: 판교역** 또는 `--es cmd plan` → 내비 경로(NaviHelper)를 받아 약속(해 지기 전·고속도로)에 비추어 경로와 출발 시한을 ‘출발 전 계획’ 칸에 보여 주고 말합니다. 경로를 받지 못하면 그 사실을 알려 주고 판단하지 않습니다.
+정차 화면 **경로 계획: 판교역** 또는 `--es cmd plan` → 내비 경로(NaviHelper)를 받아 약속(해 지기 전·고속도로)에 비추어 경로와 출발 시한을 ‘출발 전 계획’ 칸에 보여 주고 말합니다. 경로를 받지 못하면 그 사실을 알려 주고 판단하지 않습니다(오류 코드는 말하지 않고 기록 `plan error=`에만).
+
+1.2.1: 안내 중인 경로가 있을 때 새 경로를 요청하면 내비가 먼저 ‘앞 경로 취소(onRouteCancelled)’를 보냅니다. 요청 뒤 3초 안의 취소는 실패로 보지 않고 새 경로를 최대 15초 더 기다립니다(기록 `route_replaced`).
 
 ### 3-4. 실차 모드(Virtual Console)
 
-`실차 모드로` → Virtual Console에서 기어 D·속도·방향지시등·와이퍼를 바꿉니다. 판단은 리플레이와 같은 코어가 합니다. 와이퍼는 Pleos Vehicle SDK 등록이 에뮬레이터에서 아직 확인되지 않았습니다 — `grep -E "vsdk_reg|vsdk_methods"`로 등록 여부와 함수 모양을 볼 수 있습니다.
+`실차 모드로` → Virtual Console에서 기어 D·속도·방향지시등·와이퍼를 바꿉니다. 판단은 리플레이와 같은 코어가 합니다. 와이퍼는 Pleos Vehicle SDK `registerWiperState(WindowArea, WiperStateListener)`로 받습니다 — 1.2.1에서 영역 `WindowArea(FRONT_WINDSHIELD)`를 만들어 등록하고 권한 `pleos.car.permission.CAR_WINDOWS`(설치 때 자동 허용)를 선언했습니다. `grep -E "vsdk_area|vsdk_reg|vsdk_methods"`로 등록 여부를 봅니다.
 
 | 바꿀 것 | 앱 반응 |
 |---|---|
@@ -178,7 +182,7 @@ adb logcat -d -s DP | grep -E "loc_fix|geofence|zone_xcheck|status"
 | 인식기 | Pleos SpeechToText 3.3.1 ON_DEVICE(오프라인) · 언어는 앱 언어(ko-KR / en-US) · 실패하면 앱은 버튼·질문 없는 문장으로 동작 |
 | 기록 | `stt_init`(준비) · `stt_wait`(말이 끝나기를 기다림) · `stt_listen`(듣기 시작) · `stt_result`(인식 끝 — release 빌드는 들은 글자 대신 글자 수) · `voice_cmd`(뜻) · 기기 안 기록(Ledger)에는 뜻(`VoiceCommand`)만 |
 
-에뮬레이터에서 마이크로 시험하려면 먼저 에뮬레이터 패널 **⋯(Extended Controls) → Microphone → ‘Virtual microphone uses host audio input’**을 켭니다(macOS가 마이크 권한을 물으면 허용). 그다음:
+에뮬레이터에서 마이크로 시험하려면 먼저 에뮬레이터 패널 **⋯(Extended Controls) → Microphone → ‘Virtual microphone uses host audio input’**을 켜거나 `adb emu avd hostmicon`을 넣습니다(끄기 `adb emu avd hostmicoff`, 에뮬레이터를 다시 켜면 꺼진 상태). macOS가 마이크 권한을 물으면 허용하고, 헤드폰을 쓰면 Mac 스피커 소리가 마이크에 들어가지 않습니다. 그다음:
 
 ```bash
 adb shell am start-foreground-service -n $SVC --es cmd listen
@@ -199,7 +203,7 @@ adb shell am start-foreground-service -n $SVC --es cmd stt_text --es text "'다�
 | `stt_result trigger=BUTTON src=mic why=final len=…` | 인식 끝(`why=timeout_empty`면 들린 말 없음 — 마이크 설정 확인) |
 | `voice_cmd intent=STATUS trigger=BUTTON` → `speak key=voice.status` | 뜻 풀이 → 대답 |
 
-시험용 음성 파일 주입(개발 PC 실행 스크립트가 씀): `--es cmd stt_audio_begin --es label <이름>` → `--es cmd stt_audio_chunk --es pcm <base64>`(여러 번) → `--es cmd stt_audio_end --es trigger button`(또는 `question`). PCM은 16 kHz·16 bit·mono이며 앱이 100 ms(3,200 바이트)씩 실시간 속도로 Pleos 인식기에 넣습니다(ON_DEVICE 전용 기능).
+시험용 음성 파일 주입(개발 PC 실행 스크립트가 씀): `--es cmd stt_audio_begin --es label <이름>` → `--es cmd stt_audio_chunk --es pcm <base64>`(여러 번) → `--es cmd stt_audio_end --es trigger button`(또는 `question`). PCM은 16 kHz·16 bit·mono이며 앱이 100 ms(3,200 바이트)씩 실시간 속도로 Pleos 인식기에 넣습니다(ON_DEVICE 전용 기능 — 공식 문서: `request()` 없이 첫 버퍼로 인식 시작, 이때 `onReady`·`onUpdatedRms`는 오지 않음, 끝에 `completeAudioSend()`). 조각을 셸 반복문으로 보낼 때는 `adb shell … < /dev/null`처럼 표준 입력을 막아야 합니다 — `adb shell`이 반복문의 남은 줄을 먹어 첫 조각만 가는 일이 있음(11/6 실측: 0.19초만 전달). 앱 기록 `stt_feed s=send bytes=`가 만든 파일 크기와 같은지 확인합니다.
 
 ### 3-7. 기록과 로그
 
@@ -232,5 +236,7 @@ adb shell am start-foreground-service -n $SVC --es cmd stt_text --es text "'다�
 | 부제가 `위치 GPS(대체)` | `adb logcat -d -s DP \| grep event=location` 의 `why=` | `no_permission` → 1-2의 FUSED_LOCATION `pm grant` 후 앱 재시작 · `unsupported` → Pleos 위치 서비스가 없는 이미지(대체로 정상 동작) · `no_pleos_fix_15s` → geo fix를 한 번 넣기 |
 | 부제에 `구역 밖/안(Pleos 확인)`이 안 나옴 | `grep event=geofence` | `s=skip` → Pleos 위치가 준비되지 않음(위 줄) · 전이가 없으면 플랫폼이 근접 알림을 보내지 않은 것 — 약속 판정은 코어가 거리로 하므로 동작에는 지장 없음 |
 | ‘말하기’가 ‘말하기 없음’·‘다시 시도’ | `grep -E "stt_init\|stt_perm"` | `err=no_sdk` → 음성 인식 SDK가 빠진 빌드(`-PdpStt=false`) · `PERMISSION_DENIED` → 1-2의 STT_SERVICE·RECORD_AUDIO `pm grant` 후 ‘다시 시도’ · `ON_DEVICE_ENGINE_ERROR` → 에뮬레이터 이미지의 음성 엔진 문제(앱은 버튼으로 동작) |
-| 말해도 ‘잘 못 들었어요’ | `grep stt_result` 의 `why=`·`rms=` | `timeout_empty`·`rms=0.0` → 에뮬레이터 마이크가 꺼짐(3-6의 Extended Controls) · 글자는 왔는데 뜻이 UNKNOWN → 알아듣는 말(3-6) 중 하나로 |
+| 말해도 ‘잘 못 들었어요’ | `grep stt_result` 의 `why=`·`rms=` | `timeout_empty`·`rms=0.0` → 에뮬레이터 마이크가 꺼짐(3-6의 Extended Controls 또는 `adb emu avd hostmicon`) · 글자는 왔는데 뜻이 UNKNOWN → 알아듣는 말(3-6) 중 하나로 |
+| 음성 파일 주입이 ‘들림 없음’ | `grep "stt_feed s=send"` 의 `bytes=` | 만든 PCM보다 작으면 조각이 덜 감(셸 반복문의 `adb shell`에 `< /dev/null`) · 같은데도 글자가 없으면 인식기(ON_DEVICE 엔진) 문제 — `stt_error` 확인 |
+| 리플레이가 끝났는데 요약이 안 들림 | `grep -E "summary|replay_back"` | 1.2.1부터 요약을 다 말한 뒤 실차로 돌아감(`replay_back why=idle`) — `why=timeout`이면 말이 45초 넘게 밀린 것(내비 안내가 길게 이어짐) |
 | 질문 뒤에 듣지 않음 | 정차 화면 ‘질문 뒤 듣기’ · `grep -E "stt_wait\|stt_listen"` | ‘끔’이면 켬 · `why=busy` → 내비 안내가 길게 이어짐(다음 질문에서 다시) |

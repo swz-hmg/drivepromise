@@ -382,8 +382,8 @@ class PleosStt(
         private const val INIT_LISTENER = "ai.pleos.playground.stt.listener.OnInitializeListener"
         private const val RESULT_LISTENER = "ai.pleos.playground.stt.listener.ResultListener"
         const val INIT_TIMEOUT_MS = 10_000L
-        /** 시간이 다 돼 stop()을 부른 뒤 마지막 결과를 기다리는 시간 */
-        const val STOP_GRACE_MS = 1_500L
+        /** 시간이 다 돼 stop()을 부른 뒤 마지막 결과를 기다리는 시간(1.2.1: 1.5초 → 2.5초 — 11/6 마이크 시험에서 결과 없이 끝남) */
+        const val STOP_GRACE_MS = 2_500L
         /** 인식이 끝났다(onEndedRecognition)는 알림 뒤 마지막 결과를 기다리는 시간 */
         const val END_GRACE_MS = 800L
         /** 음성 파일을 다 보낸 뒤 결과를 기다리는 시간(공개 시험 사례: 12초 안) */
