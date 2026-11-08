@@ -486,9 +486,10 @@ private fun demoDir(): File =
 
 private fun s72() {
     fun load(n: String) = File(demoDir(), "$n.json").readText()
-    // 1) 병원→집: 출발 때 해 지기 전 경고, 17:22 전 도착 → 모두 지킴
+    // 1) 병원→집(11/8 Q050: 17:16 출발·도착 예상 17:19·1.2 km — 재생 구간과 도착 시각이 맞게): 출발 때 해 지기 전 경고, 17:18:30 도착(일몰 17:22 전) → 모두 지킴
     val (a, sa) = demoRun(load("hospital_home"))
     eq(a.map { it.key }.filterNot { it.startsWith("summary") }, listOf("dark.risk"), "병원→집 발화")
+    eq(a[0].text, "이대로면 5시 19분 도착, 해는 5시 22분에 져요.", "병원→집 경고 문장(도착 예상이 일몰 전 — 짧은 문장은 ‘해 지기 직전’)")
     eq(sa.summary!!.statuses.values.toSet(), setOf(PromiseStatus.KEPT), "병원→집 판정 ${sa.summary!!.statuses}")
     eq(sa.summary!!.lines, listOf("오늘 약속 5개를 모두 지켰어요. 수고하셨어요."), "병원→집 요약")
     eq(sa.summary!!.reason, "arrived", "병원→집 끝 이유")

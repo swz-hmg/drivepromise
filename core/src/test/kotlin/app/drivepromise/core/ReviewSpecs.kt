@@ -54,6 +54,7 @@ object ReviewSpecs {
         "S95 감시 타이머 — 완료 소식이 없으면 멈추고 2초 뒤 다시, 3번이면 요약, 다른 말은 막히지 않음(C14·R11)" to ::s95,
         "S96 다음 주행 — 끝난 뒤 할 말을 다 하면 readyForNext(앱이 새 세션)(C06·R01)" to ::s96,
         "S97 고속도로 갈림길 예고 — 진출입 TBT의 방면이 IC·JC면 들어서기 전 한 번, 일반 회전·이미 고속도로·같은 방면은 없음(ADV-01)" to ::s97,
+        "S98 세워 둔 차(P)에는 회전 예측 없음 — 내비 안내에 끊긴 출발 전 계획 문장을 다시 말함, 신호 대기(D)는 그대로 조심(11/8 실행 run_1108_183038에서 발견)" to ::s98,
     )
 }
 
@@ -372,4 +373,35 @@ private fun s97() {
     eq(run(listOf(NaviEvent.Tbt(1_000, 380, TurnType.RIGHT, toward = "판교IC 방면"))), emptyList(), "일반 우회전은 예고 없음(11/6 실측 경로의 ‘판교IC 방면’ 우회전)")
     ok(run(listOf(NaviEvent.Tbt(1_000, 900, TurnType.MERGE, toward = "판교IC 방면")), limit = 100).none { it.startsWith("highway.ahead") }, "이미 고속도로면 예고 없음")
     eq(run(listOf(NaviEvent.Tbt(1_000, 3_000, TurnType.EXIT, toward = "서울TG 방면"))), emptyList(), "멀거나(1.5 km 넘음) 낱말이 없으면 없음")
+}
+
+// ---------------------------------------------------------------- 1.3.0b — 11/8 에뮬레이터 실행에서 발견(C05 글자 수 길이 + 정차 중 회전 예측)
+private fun s98() {
+    val plan = "추천 경로로 가요. 11분 걸려요. 지금 가도 오후 6시 46분 도착, 해 진 뒤예요(일몰 오후 5시 27분). 해 지기 전 도착은 어려워요 — 다른 날이나 동승을 생각해요. 고속도로가 있는지는 알 수 없어요."
+    val parkedV = VehicleSnapshot(0, gear = Gear.P, speedMps = 0f)
+    val g = QuietGate()
+    g.update(0, parkedV)
+    g.onNavi(NaviEvent.Tbt(0, 80, TurnType.LEFT))
+    eq(g.timeToTurnMs, null, "세워 둔 차(P)에는 ‘곧 회전’ 없음")
+    ok(g.normal(100, 17_000), "P에서는 긴 계획 문장(약 17초)도 창 열림")
+    val d = QuietGate()
+    d.update(0, VehicleSnapshot(0, gear = Gear.D, speedMps = 0f))
+    d.onNavi(NaviEvent.Tbt(0, 80, TurnType.LEFT))
+    ok(!d.normal(100, 10_000), "신호 대기(D · 80 m 앞 좌회전)는 그대로 — 10초 문장 시작 안 함")
+    // 스케줄러까지: 첫 말이 내비 안내에 물러선(yield) 뒤 P에서 다시 나감
+    val g2 = QuietGate()
+    g2.update(0, parkedV)
+    val q = SpeechScheduler(QuietPolicy(), g2)
+    q.submit(Utterance("plan", Priority.INFO, 4_000, render = { plan }), 0)
+    val first = q.tick(World(0, parkedV), true) as? Step.Speak ?: fail("첫 말이 나가야 함")
+    g2.onNavi(NaviEvent.Tbt(100, 80, TurnType.LEFT))   // 경로 안내 시작 — 첫 회전 80 m
+    q.yielded(first.id, 200)
+    var again: Step.Speak? = null
+    var t = 3_000L
+    while (t <= 20_000 && again == null) {
+        g2.update(t, parkedV.copy(tMillis = t))
+        again = q.tick(World(t, parkedV.copy(tMillis = t)), true) as? Step.Speak
+        t += 100
+    }
+    ok(again != null && again.key == "plan", "물러선 계획 문장을 P에서 다시 말함(1.3.0은 20초 안에 못 함): ${again?.key}@$t")
 }

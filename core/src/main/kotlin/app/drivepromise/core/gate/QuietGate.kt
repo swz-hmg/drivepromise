@@ -48,13 +48,15 @@ data class GatePolicy(
  *  - 끝낼 시간 확보(runway): 말이 회전 앞 침묵이 시작되기 전에 끝나야만 시작
  *  - 내비 안내 피하기(nav guard): TBT 거리로 예측한 내비 안내(300·100 m 앞, 2.5초)와 겹치지 않게
  *  - 신호 대기 창: 주행 중(기어 D) 속도 0이 된 뒤 2초 안 — 스케줄러가 마감 임박·두 번 끊긴 말에만 씀(방향지시등·급제동 침묵 중엔 닫힘, 1.3.0)
- * 경로 안내가 없으면(TBT 없음) 회전 예측은 하지 않고 차량 신호만 봅니다.
+ * 경로 안내가 없으면(TBT 없음) 회전 예측은 하지 않고 차량 신호만 봅니다. 기어 P(세워 둠)에서도 회전 예측은 하지 않습니다(1.3.0b).
  */
 class QuietGate(private val p: GatePolicy = GatePolicy()) : QuietWindows {
     private var nowMs = 0L
     private var speedMps = 0.0
     private var turnSignal = Turn.OFF
     private var driving = false
+    /** 1.3.0b: 기어 P(또는 시동 끔) — 세워 둔 차에는 ‘곧 회전’이 없음 */
+    private var parked = false
 
     // TBT 추정
     private var tbtAt: Long? = null
@@ -70,7 +72,7 @@ class QuietGate(private val p: GatePolicy = GatePolicy()) : QuietWindows {
     private val speedHist = ArrayDeque<Pair<Long, Double>>()
 
     /** 다가오는 회전점까지 남은 시간(ms). 경로가 없거나 그 회전을 이미 지났으면(다음 TBT를 기다리는 중) null */
-    val timeToTurnMs: Long? get() = if (tbtAt == null || turnCounted) null else (distNow() / maxOf(speedMps, p.minSpeedMps) * 1000).toLong()
+    val timeToTurnMs: Long? get() = if (tbtAt == null || turnCounted || parked) null else (distNow() / maxOf(speedMps, p.minSpeedMps) * 1000).toLong()
     val nextTurn: TurnType? get() = if (tbtAt == null || turnCounted) null else tbtTurn
     val lastTurnPassedAt: Long? get() = lastTurnAt
 
@@ -81,6 +83,9 @@ class QuietGate(private val p: GatePolicy = GatePolicy()) : QuietWindows {
         val s = (v.speedMps ?: 0f).toDouble()
         turnSignal = v.turnSignal
         driving = v.driving
+        // 1.3.0b(11/8 실행 run_1108_183038): 세워 둔 차(기어 P)에는 회전 예측을 쓰지 않음 — 출발 전 계획 문장이 내비 안내에 끊긴 뒤,
+        // 경로의 첫 회전(80 m)을 ‘16초 뒤 회전’으로 보고 글자 수로 잰 긴 문장(1.3.0 C05)을 끝내 다시 말하지 못했음
+        parked = v.parked
         while (speedHist.isNotEmpty() && now - speedHist.first().first > HIST_MS) speedHist.removeFirst()
         for ((t, v0) in speedHist) {
             val dt = (now - t) / 1000.0
