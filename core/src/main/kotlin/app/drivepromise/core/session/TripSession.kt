@@ -298,9 +298,11 @@ class TripSession(
         val restLine = rest.endTrip(now, lang)
         scheduler.endTrip(now)
         val lines = mutableListOf<String>()
-        restLine?.let { lines += it }
-        SummaryPhrases.kept(lang, promises, st)?.let { lines += it }
-        SummaryPhrases.unknownLine(lang, promises, st)?.let { lines += it }   // 1.3.0(C03): 판단 못 한 약속은 따로
+        if (tripStartMs != null) {   // 1.3.0d: 주행이 없었던 세션(세워 둔 채 시동 끔·수동 끝)은 요약하지 않음 — 판정할 주행이 없음
+            restLine?.let { lines += it }
+            SummaryPhrases.kept(lang, promises, st)?.let { lines += it }
+            SummaryPhrases.unknownLine(lang, promises, st)?.let { lines += it }   // 1.3.0(C03): 판단 못 한 약속은 따로
+        }
         val digest = scheduler.digest
         val digestLines = digest.map { d -> runCatching { d.utterance.render(SayCtx(w, 0, true)) }.getOrDefault(d.key) }
         val s = Summary(tripStartMs, now, rest.drivingMs, st, lines, digestLines, digest, RestCompliance.compute(memory.events), reason)

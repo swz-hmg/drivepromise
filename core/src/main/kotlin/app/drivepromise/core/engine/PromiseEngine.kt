@@ -79,6 +79,8 @@ class PromiseEngine(
 
     // 약속별 내부 상태
     private var darkWarned = false
+    /** 1.3.0d: 이번 세션에서 차가 한 번이라도 움직였는가(기어 R·N·D 또는 주행 시간 > 0) */
+    private var movedEver = false
     private var darkSpokeNight = false
     private var onHighway = false
     private var highwayEver = false
@@ -121,6 +123,7 @@ class PromiseEngine(
     fun tick(w: World) {
         if (tripEnded) return
         w.fix?.let { lastFix = it }
+        if (w.vehicle?.driving == true || w.drivingMs > 0) movedEver = true
         for (p in promises) {
             val s = when (p) {
                 is Promise.HomeBeforeDark -> dark(p, w)
@@ -141,7 +144,8 @@ class PromiseEngine(
         for (p in promises) {
             val cur = status[p.id] ?: PromiseStatus.UNKNOWN
             val fin = when (p) {
-                is Promise.HomeBeforeDark -> sunset(w)?.let { ss -> if (now <= ss) PromiseStatus.KEPT else PromiseStatus.MISSED } ?: cur
+                is Promise.HomeBeforeDark -> if (!movedEver) PromiseStatus.UNKNOWN   // 1.3.0d: 움직이지 않은 세션(세워 둔 채 끝남)은 판정하지 않음
+                    else sunset(w)?.let { ss -> if (now <= ss) PromiseStatus.KEPT else PromiseStatus.MISSED } ?: cur
                 // 1.3.0(C03): 도로·와이퍼 신호를 한 번도 못 받았으면 ‘모름’ — 빗길은 30초 이어진 과속만 ‘못 지킴’(끝 순간 1틱 과속은 세지 않음)
                 is Promise.AvoidHighway -> if (highwayEver) PromiseStatus.MISSED else if (!roadSeen) PromiseStatus.UNKNOWN else PromiseStatus.KEPT
                 is Promise.RainCare -> if (rainFastEver) PromiseStatus.MISSED else if (!wiperSeen) PromiseStatus.UNKNOWN else PromiseStatus.KEPT
@@ -167,6 +171,9 @@ class PromiseEngine(
         val deadline = ss - p.marginMin * 60_000L
         if (arrivedAt != null) return if (arrivedAt!! <= ss) PromiseStatus.KEPT else PromiseStatus.MISSED
         if (now > ss) {
+            // 1.3.0d(11/8 실행 화면): 이번 세션에서 아직 움직이지 않았으면(세워 둔 채 해가 짐) ‘못 지킴’이 아니라 ‘위험’(지금 출발하면 해 진 뒤) — 말은 하지 않음.
+            // 밤에 집에서 앱을 켜기만 해도 빨간 ‘못 지킴’이 뜨고, 주행 없이 끝내면 요약이 ‘해 지기 전 귀가도 지켜요’라고 나무라던 것
+            if (!movedEver) return PromiseStatus.AT_RISK
             if (!darkSpokeNight) {
                 darkSpokeNight = true
                 submit(p.id, "night", now, Priority.PROMISE, 3_500, 2_000, Validity.WHILE_STATE, deadline = now,

@@ -57,6 +57,7 @@ object ReviewSpecs {
         "S97 고속도로 갈림길 예고 — 진출입 TBT의 방면이 IC·JC면 들어서기 전 한 번, 일반 회전·이미 고속도로·같은 방면은 없음(ADV-01)" to ::s97,
         "S98 세워 둔 차(P)에는 회전 예측 없음 — 내비 안내에 끊긴 출발 전 계획 문장을 다시 말함, 신호 대기(D)는 그대로 조심(11/8 실행 run_1108_183038에서 발견)" to ::s98,
         "S99 내비 재생기가 GAIN 뒤에도 목록에 남으면(재생은 끝남) 4초 뒤 끝난 것으로 봄 — 새 재생기·포커스 잃음엔 다시 물러섬(11/8 실행 run_1108_212028)" to ::s99,
+        "S100 세워 둔 채 해가 지면 ‘못 지킴’이 아니라 ‘위험’(말 없음) · 움직인 뒤 해 진 주행은 못 지킴 · 주행 없는 세션은 요약하지 않음(11/8 실행 화면)" to ::s100,
     )
 }
 
@@ -445,4 +446,36 @@ private fun s99() {
     sim.run(0, 15_000) { t -> World(t, parked.copy(tMillis = t)) }
     eq(sim.log.map { Triple(it.key, it.attempt, it.short) }, listOf(Triple("plan", 1, false), Triple("plan", 2, true)), "계획 문장: 물러섬 → 짧게 다시")
     ok(sim.log[1].t in 6_646L..7_000L, "다시 말한 시각 ${sim.log[1].t} ms(GAIN 뒤 4초)")
+}
+
+// ---------------------------------------------------------------- 1.3.0d — 11/8 세 번째 실행 화면(밤 21:46, 세워 둔 차에 ‘해 지기 전 귀가 못 지킴’)
+private fun s100() {
+    val ss = SolarCalc.at(kstR(12, 0), LAT, LON, ZS).sunsetMs!!
+    val night = ss + 4 * 60 * MIN
+    val parkedV = VehicleSnapshot(night, gear = Gear.P, speedMps = 0f)
+    val q = SpeechScheduler(QuietPolicy(), OPEN)
+    val e = PromiseEngine(listOf(Promise.HomeBeforeDark(30)), q)
+    e.tick(World(night, parkedV, fixAt(night)))
+    eq(e.statuses["dark"], PromiseStatus.AT_RISK, "세워 둔 채 해가 짐 — ‘위험’(지금 출발하면 해 진 뒤)")
+    eq(q.tick(World(night, parkedV), true), Step.Idle, "세워 둔 동안 말 없음")
+    eq(e.endTrip(World(night + 1_000, parkedV))["dark"], PromiseStatus.UNKNOWN, "움직이지 않고 끝나면 판정하지 않음")
+    // 같은 밤에 출발하면 그때 ‘못 지킴’과 밤 문장
+    val q2 = SpeechScheduler(QuietPolicy(), OPEN)
+    val e2 = PromiseEngine(listOf(Promise.HomeBeforeDark(30)), q2)
+    e2.tick(World(night, parkedV, fixAt(night)))
+    e2.tick(World(night + 1_000, dv(night + 1_000), fixAt(night + 1_000)))
+    eq(e2.statuses["dark"], PromiseStatus.MISSED, "해 진 뒤 주행 = 못 지킴")
+    val sp = q2.tick(World(night + 1_000, dv(night + 1_000)), true)
+    ok(sp is Step.Speak && sp.key == "dark.night", "밤 문장: $sp")
+    // 세션: 세워 둔 채 끝내면(시동 끔·수동) 요약 문장 없음 — 다음 세션 준비는 바로
+    val c = RClock(night)
+    val said = mutableListOf<String>()
+    val ses = TripSession(listOf(Promise.HomeBeforeDark(30), Promise.AvoidHighway()), FakeSpeaker(), c, listener = object : TripSession.Listener {
+        override fun onSpeak(step: Step.Speak, nowMs: Long) { said += step.key }
+    })
+    repeat(30) { ses.onVehicle(parkedV.copy(tMillis = c.t)); ses.tick(); c.t += 100 }
+    val sm = ses.end("manual")
+    repeat(30) { ses.tick(); c.t += 100 }
+    eq(sm.lines, emptyList<String>(), "주행 없는 세션은 요약하지 않음(1.3.0 실행: ‘약속 4개 중 3개… 해 지기 전 귀가도’)")
+    ok(said.none { it.startsWith("summary") } && ses.readyForNext, "요약 말 없음 · 바로 다음 세션 준비: $said")
 }
