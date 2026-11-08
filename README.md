@@ -9,8 +9,9 @@
 | 한 줄 소개 | 해 지기 전 귀가 · 고속도로 대신 일반도로 · 비 오는 날 조심 · 2시간마다 쉬기 · 약속 구역 — 다섯 가지 약속을 차량 신호로 판단하고, 내비 안내·방향지시등 같은 ‘침묵 구간’을 피해 한두 문장으로 말합니다 |
 | APK | [`apk/DrivePromiseTeam_DrivePromise_release.apk`](apk/) (release 빌드, 전용 키 서명) · 체크섬 `apk/SHA256SUMS.txt` |
 | 테스트 환경 | Pleos Connect 에뮬레이터(Android 14 · API 34, 2560×1440) — 아래 3장 |
-| 시연 영상 | [`docs/demo/drivepromise_demo.mp4`](docs/demo/) (약 3분 30초 · 에뮬레이터 실제 녹화: 출발 전 계획 · 시연 주행 4개 · 질문과 대답 · 음성 명령) |
+| 시연 영상 | [`docs/demo/drivepromise_demo.mp4`](docs/demo/) (약 3분 40초 · 에뮬레이터 실제 녹화: 출발 전 계획 · 시연 주행 4개 · 질문과 대답 · 음성 명령) |
 | 문서 | 운영 매뉴얼 [`docs/MANUAL.md`](docs/MANUAL.md) · 설계 계약 [`docs/contracts.md`](docs/contracts.md) |
+| 개발 방식 | 생성형 AI 도구 활용 — 아래 8장 |
 
 ---
 
@@ -205,6 +206,14 @@ adb logcat -d -s DP | grep -E "stt_init|stt_listen|stt_result|voice_cmd"
 - 주행 중에는 입력을 요구하지 않습니다. 큰 버튼은 ‘다시 들려줘’·‘🎤 말하기’ 둘, 문장은 4초 안팎.
 - 마이크는 버튼을 누를 때와 쉬기 질문 직후 5초만 열립니다. 들은 말의 원문은 기록하지 않고 뜻(예: `STATUS`)만 기기 안 기록에 남깁니다. ‘질문 뒤 듣기’는 정차 화면에서 끌 수 있습니다.
 - 판단이 틀릴 수 있는 상황(신호 없음·경로 없음)에서는 침묵합니다. 이 앱은 운전 보조 안내이며 운전자의 판단을 대신하지 않습니다.
+
+## 8. 개발 방식 — 생성형 AI 활용 고지
+
+- 문제 정의, 약속 규칙과 설계 판단, 시험 기준, 에뮬레이터 실행 검증은 참가자가 직접 했습니다.
+- 코드·문서·시연 영상 제작에는 생성형 AI 도구(Anthropic Claude)를 활용했습니다. AI가 만든 결과물은 참가자가 모두 검토하고, 자동 시험(83개)과 Pleos Connect 에뮬레이터 실행으로 확인했습니다.
+- 일부 영상·그림 파일에는 이 도구가 붙인 출처 정보(C2PA 콘텐츠 자격 증명)가 들어 있습니다. 개인 정보는 들어 있지 않습니다.
+
+*Built with AI assistance: the participant defined the problem, the promise rules, the design decisions and test criteria, and verified everything on the emulator; code, documents and the demo video were produced with a generative AI tool (Anthropic Claude) and reviewed by the participant. Some media files carry C2PA provenance metadata.*
 
 ---
 
