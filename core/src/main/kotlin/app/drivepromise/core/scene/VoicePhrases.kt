@@ -32,15 +32,17 @@ object VoicePhrases {
             risky.size > 2 -> if (ko) "약속 ${risky.size}개가 위험해요. 하나씩 조심해요." else "${risky.size} promises are at risk. Take care."
             else -> {
                 val names = risky.map { SummaryPhrases.name(lang, it) }
+                // 1.3.0(C10): 위험 약속이 있어도 판단 전 약속을 빠뜨리지 않음(antigravity BUG-02) — 영어도 개수를 말함
                 if (ko) {
                     val joined = names.joinToString("·")
                     "$joined${josa(joined, "이", "가")} 위험해요." + when {
                         rest <= 0 -> ""
                         unknown.isEmpty() -> " 나머지는 지키는 중이에요."
                         else -> " ${rest}개는 지키는 중이에요."
-                    }
+                    } + (if (unknown.isEmpty()) "" else " " + unknownTail(lang, unknown))
                 } else {
-                    names.joinToString(" and ").replaceFirstChar { it.uppercase() } + (if (risky.size == 1) " is" else " are") + " at risk."
+                    names.joinToString(" and ").replaceFirstChar { it.uppercase() } + (if (risky.size == 1) " is" else " are") + " at risk." +
+                        (if (rest > 0) " $rest on track." else "") + (if (unknown.isEmpty()) "" else " " + unknownTail(lang, unknown).replaceFirstChar { it.uppercase() })
                 }
             }
         }

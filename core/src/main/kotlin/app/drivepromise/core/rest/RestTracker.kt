@@ -26,9 +26,14 @@ class RestTracker(
     private val policy: RestPolicy = RestPolicy(),
     private val scheduler: SpeechScheduler,
     private val ledger: LedgerSink = LedgerSink { },
+    /** 1.3.0(C12): 쉬기 약속을 켜지 않았으면 false — 운전 시간은 세되 예고·본 알림·칭찬·요약을 하지 않음(codex R05) */
+    val enabled: Boolean = true,
 ) {
-    /** 앱이 꺼졌다 켜져도 이어지게 저장할 값 */
-    data class State(val drivingMs: Long, val lastDrivingAtMs: Long?, val headsUpDone: Boolean, val mainDone: Boolean)
+    /**
+     * 앱이 꺼졌다 켜져도 이어지게 저장할 값.
+     * 1.3.0(R08): parkedAtSave = 저장할 때 차가 세워져(P) 있었는가 — 앱이 없던 시간을 ‘쉼’으로 볼 근거
+     */
+    data class State(val drivingMs: Long, val lastDrivingAtMs: Long?, val headsUpDone: Boolean, val mainDone: Boolean, val parkedAtSave: Boolean = false)
 
     private val targetMs = policy.targetMin * MIN
     private val headsUpAtMs = (policy.targetMin - policy.leadMin) * MIN
@@ -48,12 +53,17 @@ class RestTracker(
     private var headsUpDone = false
     private var mainDone = false
     private var praisePending = false
+    private var lastParked = false
+    /** 1.3.0(C13): 이번 주행에서 목표 시간을 한 번이라도 넘겼는가 — ‘알림 뒤 쉬면 지킴’(Q027)은 그대로, 넘긴 사실은 요약에 따로 */
+    var overTargetEver = false
+        private set
 
     /** 10 Hz. 차량 상태를 아직 모르면(null) 운전 시간을 늘리지 않습니다 */
     fun update(nowMs: Long, v: VehicleSnapshot?) {
         val prev = lastT
         lastT = nowMs
         val driving = v?.driving == true
+        lastParked = v?.parked == true
         if (prev != null && nowMs > prev && driving) {
             drivingMs += nowMs - prev
             lastDrivingAt = nowMs
@@ -65,26 +75,33 @@ class RestTracker(
             parkedSince = null
             if (praisePending) {
                 praisePending = false
-                scheduler.submit(praise(), nowMs)
+                if (enabled) scheduler.submit(praise(), nowMs)
             }
-            checkThresholds(nowMs)
+            if (enabled) checkThresholds(nowMs)
         }
     }
 
     /** 주행 끝 — 쉬지 못하고 본 알림 시각을 넘겼으면 요약 문장(말하기는 요약 담당). 운전 시간은 쉼 규칙으로만 0이 됨 */
     fun endTrip(nowMs: Long, lang: Lang = Lang.KO): String? {
         ledger.accept(LedgerEvent.TripEnded(nowMs, drivingMs))
-        return if (drivingMs >= targetMs) Phrases.digestNoRest(lang, drivingMs, policy) else null
+        if (!enabled) return null
+        return when {
+            drivingMs >= targetMs -> Phrases.digestNoRest(lang, drivingMs, policy)
+            overTargetEver -> Phrases.overThenRested(lang, policy)   // 1.3.0(C13)
+            else -> null
+        }
     }
 
-    fun state(): State = State(drivingMs, lastDrivingAt, headsUpDone, mainDone)
+    fun state(): State = State(drivingMs, lastDrivingAt, headsUpDone, mainDone, lastParked)
 
     /** 저장해 둔 값으로 이어 가기. 꺼져 있던 동안 쉼 기준 시간이 지났으면 쉼으로 인정 */
     fun restore(s: State, nowMs: Long) {
         lastT = nowMs
         val last = s.lastDrivingAtMs
         lastDrivingAt = last
-        if (s.drivingMs > 0 && last != null && nowMs - last >= restResetMs) {
+        // 1.3.0(R08): 앱이 없던 시간을 쉼으로 보려면 근거가 필요 — 저장 때 세워져(P) 있었거나, 아주 오래(기본 60분) 꺼져 있었을 때만
+        val gap = if (last != null) nowMs - last else 0L
+        if (s.drivingMs > 0 && last != null && gap >= restResetMs && (s.parkedAtSave || gap >= policy.restoreAssumeRestMin * MIN)) {
             ledger.accept(LedgerEvent.RestTaken(nowMs, last, s.drivingMs))
             drivingMs = 0
             headsUpDone = false
@@ -95,7 +112,7 @@ class RestTracker(
             drivingMs = s.drivingMs
             headsUpDone = s.headsUpDone
             mainDone = s.mainDone
-            parkedSince = last   // 아직 세워 둔 채라면 꺼진 시간도 쉼에 넣음
+            parkedSince = if (s.parkedAtSave) last else null   // 저장 때 세워져 있었으면 꺼진 시간도 쉼에 넣음(1.3.0: 아니면 지금부터 셈)
         }
     }
 
@@ -105,6 +122,7 @@ class RestTracker(
             ledger.accept(LedgerEvent.Due(nowMs, KEY_HEADS_UP, drivingMs))
             scheduler.submit(headsUp(nowMs + (headsUpUntilMs - drivingMs)), nowMs)
         }
+        if (drivingMs >= targetMs) overTargetEver = true
         if (!mainDone && drivingMs >= targetMs) {
             mainDone = true
             headsUpDone = true
@@ -230,6 +248,12 @@ object Phrases {
     fun praise(lang: Lang): String = when (lang) {
         Lang.KO -> "잘 쉬셨어요. 약속 지키셨습니다."
         Lang.EN -> "Well rested — promise kept."
+    }
+
+    /** 1.3.0(C13): 목표 시간을 넘겼지만 알림 뒤 쉬었음 — 넘긴 사실과 쉰 것을 함께(‘잔소리’가 아니라 기록) */
+    fun overThenRested(lang: Lang, p: RestPolicy): String = when (lang) {
+        Lang.KO -> koDuration(p.targetMin).let { d -> "오늘은 $d${app.drivepromise.core.scene.VoicePhrases.josa(d, "을", "를")} 넘겨 운전했지만, 알림 뒤 쉬셨어요." }
+        Lang.EN -> "You went past ${enDuration(p.targetMin)} today, but you rested after the reminder."
     }
 
     fun digestNoRest(lang: Lang, drivingMs: Long, p: RestPolicy): String {

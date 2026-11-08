@@ -58,6 +58,7 @@ class PleosStt(
     private var epdLogged = false
     private var stopped = false
     private var timeout: Runnable? = null
+    private var initRetries = 0
     private var feed: ByteArrayOutputStream? = null
     private var feedLabel = ""
     @Volatile private var feeding = false
@@ -79,7 +80,14 @@ class PleosStt(
             } else {   // 예전 판: 인자 없는 initialize() — 부르고 나면 바로 준비
                 if (call("initialize")) main.post { onInit("onSuccess", null) } else { state = State.ERROR; lastError = "initialize" }
             }
-            main.postDelayed({ if (state == State.INIT) L.log("stt_init_timeout", "ms" to INIT_TIMEOUT_MS) }, INIT_TIMEOUT_MS)
+            main.postDelayed({
+                if (state == State.INIT) {   // 1.3.0(C14): 준비 중에 머물지 않게 — 오류로 표시하고 한 번만 다시 시도
+                    state = State.ERROR
+                    lastError = "init_timeout"
+                    L.log("stt_init_timeout", "ms" to INIT_TIMEOUT_MS, "retry" to (initRetries < 1))
+                    if (initRetries < 1) { initRetries++; main.postDelayed({ retry() }, 2_000) }
+                }
+            }, INIT_TIMEOUT_MS)
         } catch (e: ClassNotFoundException) {
             state = State.OFF
             lastError = "no_sdk"

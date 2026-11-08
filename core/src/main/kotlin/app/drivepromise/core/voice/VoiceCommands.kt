@@ -26,8 +26,9 @@ object VoiceCommands {
         if (n.isEmpty()) return VoiceIntent.UNKNOWN
         val tokens = n.split(' ')
         val joined = n.replace(" ", "")
-        // 언어 설정과 상관없이 두 문법을 모두 봄(운전자가 섞어 말해도) — 설정 언어 쪽을 먼저
-        val order = if (lang == Lang.EN) listOf(::en, ::ko) else listOf(::ko, ::en)
+        // 1.3.0(C08): 한국어 설정에서는 한국어 문법만(‘what time is it’→REPEAT 같은 오수락 방지, 인식기도 ko-KR이라 영어 낱말은 거의 안 옴).
+        // 영어 설정에서는 영어 먼저, 한국어도 봄(섞어 말해도)
+        val order = if (lang == Lang.EN) listOf(::en, ::ko) else listOf(::ko)
         for (f in order) {
             val r = f(tokens, joined)
             if (r != VoiceIntent.UNKNOWN) return r
@@ -40,6 +41,8 @@ object VoiceCommands {
     private val KO_QUIET = listOf("조용", "그만해", "그만말", "말하지마", "말좀그만", "시끄러", "닥쳐")
     private val KO_REPEAT = listOf("다시", "뭐라고", "뭐라구", "한번더", "못들었", "안들려", "잘못들")
     private val KO_STATUS = listOf("약속알려", "약속말해", "약속어때", "약속어떻", "약속확인", "약속뭐", "약속은", "상태")   // ‘약속대로 쉴게’는 대답(YES)이므로 ‘약속’만으로는 안 봄
+    /** 1.3.0(C08, 11/9 사전 목표 고정 전 반영): ‘약속’과 서술어 사이의 조사·부사 허용 — ‘약속을 알려 줘’·‘약속 좀 알려 줘’·‘약속 잘 지키고 있어’. ‘약속대로’·‘약속 시간’은 걸리지 않음 */
+    private val KO_STATUS_RE = Regex("약속(을|를|은|는|이|가|좀|다|잘|들)*(알려|말해|어때|어떻|확인|뭐|지키|지켰)")
     private val KO_NO_TOKENS = setOf("아니", "아니요", "아니오", "아뇨", "아니야", "싫어", "됐어", "괜찮아", "괜찮아요")
     private val KO_NO = listOf("괜찮", "안쉬", "쉬지않", "안쉴", "나중에", "조금더", "좀더갈", "그냥갈", "있다가", "이따가")
     private val KO_YES_TOKENS = setOf("응", "네", "예", "그래", "그래요", "좋아", "좋아요", "알았어", "알겠어", "오케이", "넹", "웅", "네네", "응응")
@@ -48,7 +51,7 @@ object VoiceCommands {
     private fun ko(tokens: List<String>, joined: String): VoiceIntent = when {
         anyIn(joined, KO_QUIET) -> VoiceIntent.QUIET
         anyIn(joined, KO_REPEAT) -> VoiceIntent.REPEAT
-        anyIn(joined, KO_STATUS) || tokens == listOf("약속") -> VoiceIntent.STATUS
+        anyIn(joined, KO_STATUS) || KO_STATUS_RE.containsMatchIn(joined) || tokens == listOf("약속") -> VoiceIntent.STATUS
         tokens.any { it in KO_NO_TOKENS } || anyIn(joined, KO_NO) -> VoiceIntent.NO
         tokens.any { it in KO_YES_TOKENS } || anyIn(joined, KO_YES) -> VoiceIntent.YES
         else -> VoiceIntent.UNKNOWN

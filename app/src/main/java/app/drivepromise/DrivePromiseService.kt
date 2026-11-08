@@ -55,6 +55,10 @@ import kotlin.math.abs
  *   음성(11/6 STT C안): cmd=listen(‘말하기’ 버튼과 같음) · cmd=voice value=on|off(질문 뒤 듣기) · cmd=stt_retry
  *   시험: cmd=stt_audio_begin label=<이름> → cmd=stt_audio_chunk pcm=<base64> … → cmd=stt_audio_end [trigger=question|button] (Pleos 인식기에 PCM 주입)
  *         cmd=stt_text text=<글자> [trigger=…] (인식기를 건너뛰고 글자를 바로 — 뜻 풀이·대답만 시험)
+ *   1.3.0 약속 설정(정차 화면과 같음): cmd=promise id=<dark|highway|rain|rest|zone> value=on|off · cmd=rest_every value=<분> ·
+ *         cmd=dark_margin value=<분> · cmd=zone_radius value=<m> · cmd=zone_here(지금 위치를 구역 중심으로) · cmd=autostart value=on|off
+ * 1.3.0 보호: 이 서비스는 android.permission.DUMP 로 보호(매니페스트) — adb 셸과 같은 앱만 부를 수 있고, 다른 설치 앱은 못 부름(11/7 codex F07).
+ * 1.3.0 다음 주행: 실차(REAL) 세션이 끝나면 요약을 다 말한 뒤 새 세션을 만들어 다음 주행을 받음(11/7 codex F01). 시동(부팅) 때는 BootReceiver가 시작.
  *
  * 화면 모드(11/5 Q036, 화면모드전환설계 v0.1): 세션 단계 + 플랫폼 DO 판정(+가정) + 사용자 설정 → PARKED / DRIVE_DO / DRIVE_VOICE.
  * 정차 화면(MainActivity)이 DRIVE_DO 로 바뀌는 순간 주행 화면(DriveActivity, DO 선언)을 띄우고, 주행 화면은 모드가 바뀌면 스스로 닫힘.
@@ -95,6 +99,9 @@ class DrivePromiseService : Service() {
     private var lastSave = 0L
     private var carUx: PleosCarUx? = null
     private var stt: PleosStt? = null
+    private var renew: Runnable? = null                  // 1.3.0: 실차 세션 끝 → 새 세션
+    private val speakInfo = HashMap<Long, Triple<String, Long, Long>>()   // 1.3.0: 발화 id → (key, 예상 길이, 시작 시각) — 실제 길이 기록
+    private var startSrc = "app"
     private var pendingListen: ListenTrigger? = null   // 말이 끝나면 들을 차례(버튼·질문)
     private var pendingSince = 0L
     private var cueing = false                         // ‘띵’ 뒤 마이크를 열기까지(그동안도 새 말을 시작하지 않음)
@@ -131,7 +138,7 @@ class DrivePromiseService : Service() {
         val v = PleosVoice(this, main,
             onNavPlayers = { n -> navPlayers = n; if (n > 0) stt?.cancel("nav"); session?.onNavPlayers(n) },
             onFocus = { f -> session?.onFocus(f) },
-            onDone = { id -> session?.onSpeechDone(id) },
+            onDone = { id -> noteDone(id); session?.onSpeechDone(id) },
             onError = { id, c -> session?.onSpeechError(id, c) })
         v.start()
         voice = v
@@ -152,6 +159,7 @@ class DrivePromiseService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        intent?.getStringExtra("src")?.let { s -> if (s != startSrc) { startSrc = s; L.log("svc", "s" to "start", "src" to s) } }
         val cmd = intent?.getStringExtra("cmd")
         if (cmd != null) {
             L.log("cmd", "cmd" to cmd, "name" to intent.getStringExtra("name"))
@@ -174,6 +182,12 @@ class DrivePromiseService : Service() {
                     "stt_audio_begin" -> stt?.feedBegin(intent.getStringExtra("label") ?: "clip")
                     "stt_audio_chunk" -> stt?.feedChunk(intent.getStringExtra("pcm") ?: "")?.let { n -> L.log("stt_feed", "s" to "chunk", "total" to n) }
                     "stt_audio_end" -> stt?.feedEnd(triggerOf(intent.getStringExtra("trigger")) ?: ListenTrigger.BUTTON)
+                    "promise" -> setPromiseOn(intent.getStringExtra("id") ?: "", intent.getStringExtra("value") != "off")
+                    "rest_every" -> intent.getStringExtra("value")?.toIntOrNull()?.let { setRestEvery(it) }
+                    "dark_margin" -> intent.getStringExtra("value")?.toIntOrNull()?.let { setDarkMargin(it) }
+                    "zone_radius" -> intent.getStringExtra("value")?.toIntOrNull()?.let { setZoneRadius(it) }
+                    "zone_here" -> setZoneHere()
+                    "autostart" -> setAutoStart(intent.getStringExtra("value") != "off")
                 }
             } catch (e: Throwable) {
                 L.log("cmd_error", "cmd" to cmd, "err" to e)
@@ -208,6 +222,9 @@ class DrivePromiseService : Service() {
     fun startReal() {
         backToReal?.let { main.removeCallbacks(it) }
         backToReal = null
+        renew?.let { main.removeCallbacks(it) }
+        renew = null
+        speakInfo.clear()
         closeSession()
         mode = Mode.REAL
         replay = null
@@ -230,6 +247,7 @@ class DrivePromiseService : Service() {
         replay = p
         replayHeld = false
         replayName = name
+        speakInfo.clear()
         val s = newSession(p.clock, forReplay = true)
         s.attachReplay(p)
         session = s
@@ -285,11 +303,18 @@ class DrivePromiseService : Service() {
             override fun onPhase(phase: TripSession.Phase, nowMs: Long) {
                 L.log("phase", "phase" to phase, "now" to nowMs, "mode" to mode)
                 if (phase == TripSession.Phase.ENDED && mode == Mode.REPLAY) scheduleBackToReal()
+                if (phase == TripSession.Phase.ENDED && mode == Mode.REAL) scheduleRenew()   // 1.3.0(C06): 다음 주행
                 if (phase != TripSession.Phase.DRIVING) saveRest()
             }
 
             override fun onSpeak(step: Step.Speak, nowMs: Long) {
-                L.log("speak", "key" to step.key, "id" to step.id, "short" to step.short, "repeat" to step.repeat, "attempt" to step.attempt, "now" to nowMs, "text" to step.text)
+                speakInfo[step.id] = Triple(step.key, step.estMs, System.currentTimeMillis())
+                L.log("speak", "key" to step.key, "id" to step.id, "short" to step.short, "repeat" to step.repeat, "attempt" to step.attempt, "now" to nowMs,
+                    "est" to step.estMs, "chars" to step.text.length, "text" to step.text)
+            }
+
+            override fun onWatchdog(key: String, nowMs: Long) {
+                L.log("tts_watchdog", "key" to key)   // 1.3.0(C14): 완료 소식 없이 너무 오래 — 멈추고 2초 뒤 다시
             }
 
             override fun onStatuses(statuses: Map<String, PromiseStatus>, nowMs: Long) {
@@ -311,7 +336,36 @@ class DrivePromiseService : Service() {
             override fun onEvent(e: LedgerEvent) {
                 if (e is LedgerEvent.RestTaken || e is LedgerEvent.TripEnded) main.post { saveRest() }
             }
-        })
+        }, realClock = Clock { System.currentTimeMillis() })   // 1.3.0: 감시 타이머는 실제 시계(리플레이는 가상 시계가 배속)
+    }
+
+    /** 1.3.0(C05): 발화의 실제 길이(onStart 무렵 → onDone) — 예상 길이와 함께 기록해 글자당 시간을 다시 맞춤 */
+    private fun noteDone(id: Long) {
+        val (key, est, at) = speakInfo.remove(id) ?: return
+        val ms = System.currentTimeMillis() - at
+        L.log("dur", "key" to key, "id" to id, "est" to est, "ms" to ms, "over" to (ms - est))
+    }
+
+    /**
+     * 1.3.0(C06): 실차 세션이 끝나면(도착·시동 끔·긴 정차·수동) 요약·대답을 다 말한 뒤 새 세션 — 쉬기 상태는 저장값으로 이어 감.
+     * 1.2.2까지는 리플레이에만 이 경로가 있어, 실차에서는 첫 주행이 끝나면 다시 D로 가도 판정·말·주행 화면이 멈춰 있었음.
+     */
+    private fun scheduleRenew() {
+        renew?.let { main.removeCallbacks(it) }
+        val endedAt = System.currentTimeMillis()
+        val r = object : Runnable {
+            override fun run() {
+                if (mode != Mode.REAL || renew !== this) return
+                val s = session
+                val waited = System.currentTimeMillis() - endedAt
+                val busy = s != null && (!s.readyForNext || voice?.isSpeaking == true || pendingListen != null || cueing || stt?.listening == true)
+                if (busy && waited < BACK_MAX_MS) { main.postDelayed(this, 500); return }
+                L.log("renew", "why" to (if (busy) "timeout" else "idle"), "waitedMs" to waited, "reason" to s?.summary?.reason)
+                startReal()
+            }
+        }
+        renew = r
+        main.postDelayed(r, RENEW_MIN_MS)
     }
 
     /**
@@ -376,8 +430,29 @@ class DrivePromiseService : Service() {
     }
 
     fun setPromiseOn(id: String, on: Boolean) {
+        if (id !in Prefs.PROMISE_IDS) { L.log("settings", "s" to "bad_id", "id" to id); return }
         prefs.setPromiseOn(id, on)
-        if (mode == Mode.REAL && session?.phase == TripSession.Phase.PARKED) startReal()   // 세워 둔 동안만 바로 반영
+        L.log("settings", "promise" to id, "on" to on)
+        applySettings()
+    }
+
+    // ---------------------------------------------------------------- 1.3.0 약속 설정(PT 과제 — 가족과 함께 정하는 화면)
+    fun setRestEvery(min: Int) { prefs.restEveryMin = min.coerceIn(30, 240); L.log("settings", "restEvery" to prefs.restEveryMin); applySettings() }
+    fun setDarkMargin(min: Int) { prefs.darkMarginMin = min.coerceIn(0, 120); L.log("settings", "darkMargin" to prefs.darkMarginMin); applySettings() }
+    fun setZoneRadius(m: Int) { prefs.zoneRadiusM = m.coerceIn(500, 100_000); L.log("settings", "zoneRadius" to prefs.zoneRadiusM); applySettings() }
+    /** 지금 위치(마지막 좌표)를 구역 중심으로 — 위치를 모르면 그대로 */
+    fun setZoneHere(): Boolean {
+        val f = session?.lastFix ?: run { L.log("settings", "zoneHere" to "no_fix"); return false }
+        prefs.setZone(f.lat, f.lon, prefs.zoneRadiusM)
+        L.log("settings", "zoneHere" to "ok", "lat" to String.format(java.util.Locale.US, "%.3f", f.lat), "lon" to String.format(java.util.Locale.US, "%.3f", f.lon))
+        applySettings()
+        return true
+    }
+    fun setAutoStart(on: Boolean) { prefs.autoStart = on; L.log("settings", "autoStart" to on) }
+    /** 세워 둔 동안(또는 주행이 끝난 뒤)만 바로 반영 — 주행 중 바꾸면 다음 주행부터 */
+    private fun applySettings() {
+        val ph = session?.phase
+        if (mode == Mode.REAL && (ph == TripSession.Phase.PARKED || ph == TripSession.Phase.ENDED)) startReal()
     }
 
     // ---------------------------------------------------------------- 화면 모드
@@ -603,9 +678,11 @@ class DrivePromiseService : Service() {
         /** 리플레이가 끝난 뒤 실차 세션으로 돌아가기까지 — 최소(화면에 요약이 보이게)·최대(말·듣기가 끝나지 않아도) */
         const val BACK_MIN_MS = 4_000L
         const val BACK_MAX_MS = 45_000L
+        /** 1.3.0: 실차 세션이 끝난 뒤 새 세션까지 최소 시간(요약이 화면에 보이게) */
+        const val RENEW_MIN_MS = 3_000L
 
-        fun start(ctx: Context) {
-            ctx.startForegroundService(Intent(ctx, DrivePromiseService::class.java))
+        fun start(ctx: Context, src: String = "app") {
+            ctx.startForegroundService(Intent(ctx, DrivePromiseService::class.java).putExtra("src", src))
         }
     }
 }

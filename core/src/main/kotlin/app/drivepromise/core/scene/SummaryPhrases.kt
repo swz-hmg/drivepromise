@@ -23,6 +23,23 @@ object SummaryPhrases {
         PromiseStatus.UNKNOWN -> if (lang == Lang.KO) "모름" else "unknown"
     }
 
+    /**
+     * 1.3.0(C03): 신호가 없어 판단하지 못한 약속 — 이름으로 한 줄(셋 이상이면 개수). 없으면 null.
+     * ‘모르면 판단 보류’ 원칙: 관측이 없던 약속을 ‘지킴’으로 세지 않고 따로 알려 줌(11/7 codex F05).
+     */
+    fun unknownLine(lang: Lang, promises: List<Promise>, statuses: Map<String, PromiseStatus>): String? {
+        val unk = promises.filter { statuses[it.id] == PromiseStatus.UNKNOWN }
+        if (unk.isEmpty()) return null
+        return when (lang) {
+            Lang.KO -> if (unk.size <= 2) {
+                val n = unk.joinToString("·") { name(lang, it) }
+                "$n${VoicePhrases.josa(n, "은", "는")} 판단할 신호가 없었어요."
+            } else "약속 ${unk.size}개는 판단할 신호가 없었어요."
+            Lang.EN -> if (unk.size <= 2) unk.joinToString(" and ") { name(lang, it) }.replaceFirstChar { it.uppercase() } + ": no signal to judge."
+            else "${unk.size} promises had no signal to judge."
+        }
+    }
+
     /** 주행 끝 한 줄: “약속 4개 중 3개를 지켰어요.” — 판정이 KEPT/MISSED인 것만 셈 */
     fun kept(lang: Lang, promises: List<Promise>, statuses: Map<String, PromiseStatus>): String? {
         val judged = promises.filter { statuses[it.id] == PromiseStatus.KEPT || statuses[it.id] == PromiseStatus.MISSED }

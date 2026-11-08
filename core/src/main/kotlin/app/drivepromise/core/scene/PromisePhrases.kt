@@ -17,6 +17,13 @@ object PromisePhrases {
         return if (t.minute == 0) "$ampm ${h12}시" else "$ampm ${h12}시 ${t.minute}분"
     }
 
+    /** 오전·오후를 뺀 짧은 시각(‘5시 28분’) — 같은 문장 안 두 시각이 모두 오후인 일몰 경고용(1.3.0, 문장 길이 줄이기) */
+    fun koClockShort(epochMs: Long, zone: ZoneId): String {
+        val t = Instant.ofEpochMilli(epochMs).atZone(zone).toLocalTime()
+        val h12 = when (val x = t.hour % 12) { 0 -> 12; else -> x }
+        return if (t.minute == 0) "${h12}시" else "${h12}시 ${t.minute}분"
+    }
+
     fun enClock(epochMs: Long, zone: ZoneId): String {
         val t = Instant.ofEpochMilli(epochMs).atZone(zone).toLocalTime()
         val h = t.hour
@@ -25,9 +32,15 @@ object PromisePhrases {
     }
 
     // ---- 해 지기 전 귀가
+    /**
+     * 1.3.0(C02, 11/7 결정): ‘쉬지 말고 바로 가요’ 삭제 — 같은 앱의 ‘2시간마다 쉬기’ 약속과 충돌.
+     * 짧은 문장은 도착이 실제로 일몰 뒤일 때만 ‘해 진 뒤’(판정 기준은 일몰 30분 전이라 일몰 전 도착도 위험일 수 있음 — codex R10).
+     */
     fun darkRisk(lang: Lang, sunsetMs: Long, arrivalMs: Long, zone: ZoneId, short: Boolean): String = when (lang) {
-        Lang.KO -> if (short) "해 진 뒤 도착이에요. 쉬지 말고 가요." else "이대로면 ${koClock(arrivalMs, zone)} 도착, 해는 ${koClock(sunsetMs, zone)}에 져요. 쉬지 말고 바로 가요."
-        Lang.EN -> if (short) "Arriving after dark. Keep going." else "At this pace you arrive ${enClock(arrivalMs, zone)} and the sun sets ${enClock(sunsetMs, zone)} — best not to stop."
+        Lang.KO -> if (short) (if (arrivalMs > sunsetMs) "해 진 뒤 도착이에요." else "해 지기 직전 도착이에요.")
+        else "이대로면 ${koClockShort(arrivalMs, zone)} 도착, 해는 ${koClockShort(sunsetMs, zone)}에 져요."
+        Lang.EN -> if (short) (if (arrivalMs > sunsetMs) "Arriving after dark." else "Arriving just before sunset.")
+        else "At this pace you arrive ${enClock(arrivalMs, zone)}; sunset is ${enClock(sunsetMs, zone)}"   // enClock이 ‘p.m.’로 끝남
     }
 
     fun darkNow(lang: Lang, short: Boolean): String = when (lang) {
@@ -44,6 +57,12 @@ object PromisePhrases {
     fun highwayEntered(lang: Lang, short: Boolean): String = when (lang) {
         Lang.KO -> if (short) "고속도로예요. 약속과 달라요." else "고속도로에 들어섰어요. 약속과 달라요. 다음 나들목에서 내려갈지 정해요."
         Lang.EN -> if (short) "This is a highway — not as promised." else "You've entered a highway, unlike your promise. Decide at the next exit."
+    }
+
+    /** 1.3.0(PT 과제 ADV-01): 고속도로로 들어가는 갈림길 예고 — 내비 TBT 설명(‘판교IC 방면’ 등)으로 */
+    fun highwayAhead(lang: Lang, toward: String, short: Boolean): String = when (lang) {
+        Lang.KO -> if (short) "앞이 고속도로 방면이에요." else "앞 갈림길은 ${toward.trim()}이에요. 약속대로 일반도로로 가요."
+        Lang.EN -> if (short) "Highway ramp ahead." else "The next turn heads to ${toward.trim()}. Stay on local roads as promised."
     }
 
     // ---- 비 오는 날

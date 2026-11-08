@@ -47,7 +47,7 @@ data class GatePolicy(
  *  - 방향지시등이 켜진 동안·급제동 뒤 2초 → 침묵
  *  - 끝낼 시간 확보(runway): 말이 회전 앞 침묵이 시작되기 전에 끝나야만 시작
  *  - 내비 안내 피하기(nav guard): TBT 거리로 예측한 내비 안내(300·100 m 앞, 2.5초)와 겹치지 않게
- *  - 신호 대기 창: 주행 중(기어 D) 속도 0이 된 뒤 2초 안 — 스케줄러가 마감 임박·두 번 끊긴 말에만 씀
+ *  - 신호 대기 창: 주행 중(기어 D) 속도 0이 된 뒤 2초 안 — 스케줄러가 마감 임박·두 번 끊긴 말에만 씀(방향지시등·급제동 침묵 중엔 닫힘, 1.3.0)
  * 경로 안내가 없으면(TBT 없음) 회전 예측은 하지 않고 차량 신호만 봅니다.
  */
 class QuietGate(private val p: GatePolicy = GatePolicy()) : QuietWindows {
@@ -170,6 +170,10 @@ class QuietGate(private val p: GatePolicy = GatePolicy()) : QuietWindows {
 
     override fun stopWindow(nowMs: Long): Boolean {
         val s = stoppedSince ?: return false
+        // 1.3.0(C04): 방향지시등이 켜진 동안(좌회전 대기 등)·급제동 직후에는 신호 대기 창도 열지 않음 — 11/7 codex R12
+        if (turnSignal != Turn.OFF) return false
+        val hb = hardBrakeAt
+        if (hb != null && nowMs - hb < p.hardBrakeHoldMs) return false
         return driving && nowMs - s in 0..p.stopWindowMs
     }
 

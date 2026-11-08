@@ -120,7 +120,7 @@ object ReplayParser {
                     }
                     NaviEvent.Trip(t, eta, e.int("remainM", p) ?: bad("$p.remainM", "필요함"))
                 }
-                "tbt" -> NaviEvent.Tbt(t, e.int("distM", p) ?: bad("$p.distM", "필요함"), TurnType.of(e.str("turn", p) ?: bad("$p.turn", "필요함")), e.str("road", p))
+                "tbt" -> NaviEvent.Tbt(t, e.int("distM", p) ?: bad("$p.distM", "필요함"), TurnType.of(e.str("turn", p) ?: bad("$p.turn", "필요함")), e.str("road", p), e.str("toward", p))
                 "caution" -> {
                     val raw = e.str("kind", p) ?: bad("$p.kind", "필요함")
                     NaviEvent.Caution(t, CautionKind.of(raw), e.int("distM", p) ?: 0, raw)

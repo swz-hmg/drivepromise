@@ -219,14 +219,14 @@ private fun s61() {
 
 private fun s62() {
     val g = QuietGate()
-    g.update(0, drive(0, 15f))
+    g.update(0, drive(0, 2f))
     ok(!g.stopWindow(0), "달리는 중엔 창 없음")
-    g.update(1_000, drive(1_000, 0f))
+    g.update(1_000, drive(1_000, 0f))   // 2 m/s → 0: 2 m/s² (급제동 3 m/s² 아님)
     ok(g.stopWindow(1_000) && g.stopWindow(2_900), "정지 뒤 2초 안")
     ok(!g.stopWindow(3_100), "2초 지나면 닫힘")
     g.update(4_000, PARK.copy(tMillis = 4_000))
     ok(!g.stopWindow(4_000) && !g.stopWindow(5_000), "P는 신호 대기가 아님")
-    g.update(6_000, drive(6_000, 3f))
+    g.update(6_000, drive(6_000, 2f))
     g.update(7_000, drive(7_000, 0f))
     ok(g.stopWindow(7_500), "다시 서면 새 창")
 }
@@ -255,6 +255,7 @@ private fun s64() {
     ok(r.ses.statuses["zone"] == PromiseStatus.ON_TRACK, "세워 둔 동안도 구역 상태는 계산: ${r.ses.statuses}")
     r.ses.onVehicle(drive(T0 + 5_100))
     r.ses.onNavi(NaviEvent.Trip(T0 + 5_100, T0 + 20 * MIN, 8_000))
+    r.ses.onNavi(NaviEvent.SpeedLimit(T0 + 5_100, 50))   // 1.3.0: 도로 신호를 받아야 고속도로 약속을 판정(못 받으면 ‘모름’)
     r.run(60_000) { t -> if (t == 60_000L) r.ses.onNavi(NaviEvent.Arrived(T0 + t)) }
     eq(r.ses.phase, TripSession.Phase.DRIVING, "도착 소식만으론 아직 주행")
     eq(r.phases, listOf("DRIVING@5"), "주행 시작 소식")
@@ -311,8 +312,9 @@ private fun s66() {
     val ses = TripSession(listOf(Promise.HomeBeforeDark(30), Promise.AvoidHighway(), Promise.RestEvery(120)), spk, player.clock,
         listener = object : TripSession.Listener {
             override fun onSpeak(step: Step.Speak, nowMs: Long) { said += Said(nowMs - trip.meta.baseEpochMs, step.key, step.text, step.short, step.repeat, step.attempt) }
-        })
+        }, realClock = real)
     ses.attachReplay(player)
+    ses.onNavi(NaviEvent.SpeedLimit(trip.meta.baseEpochMs, 50))   // 1.3.0: 도로 신호(일반도로) — 못 받으면 고속도로 약속은 ‘모름’
     var cur: Step.Speak? = null
     var endAt = 0L
     var n = 0
@@ -326,7 +328,7 @@ private fun s66() {
         n++
     }
     ok(said.isNotEmpty() && said[0].key == "dark.risk" && said[0].t < 1_000, "출발 때 경고: ${said.map { it.key + "@" + it.t }}")
-    ok(said[0].text.startsWith("이대로면 오후 5시 28분 도착, 해는 오후 5시 22분에 져요"), "문장: ${said[0].text}")
+    ok(said[0].text == "이대로면 5시 28분 도착, 해는 5시 22분에 져요.", "문장(1.3.0: ‘쉬지 말고’ 삭제·짧은 시각): ${said[0].text}")
     eq(ses.phase, TripSession.Phase.ENDED, "끝")
     eq(ses.summary!!.reason, "arrived", "도착 뒤 정차로 끝")
     eq(ses.summary!!.statuses, mapOf("dark" to PromiseStatus.KEPT, "highway" to PromiseStatus.KEPT, "rest" to PromiseStatus.KEPT), "모두 지킴")
@@ -461,7 +463,7 @@ private fun demoRun(json: String, promises: List<Promise> = FIVE): Pair<List<Sai
     val said = mutableListOf<Said>()
     val ses = TripSession(promises, FakeSpeaker(), player.clock, listener = object : TripSession.Listener {
         override fun onSpeak(step: Step.Speak, nowMs: Long) { said += Said(nowMs - trip.meta.baseEpochMs, step.key, step.text, step.short, step.repeat, step.attempt) }
-    })
+    }, realClock = real)
     ses.attachReplay(player)
     var cur: Step.Speak? = null
     var endAt = 0L
@@ -505,8 +507,9 @@ private fun s72() {
     eq(sc.summary!!.lines, listOf("약속 5개 중 4개를 지켰어요. 다음엔 약속 구역도 같이 지켜요."), "구역 요약")
     // 4) 고속도로·비: 고속도로 진입 → 비 시작 → 빗길 과속 → 둘 다 못 지킴
     val (d, sd) = demoRun(load("highway_rain"))
-    eq(d.map { it.key }.filterNot { it.startsWith("summary") }, listOf("highway.on", "rain.start", "rain.fast"), "고속도로·비 발화 ${d.map { it.key + "@" + it.t / 1000 }}")
-    eq(d[2].text, "빗길에 95예요. 80 아래로 줄여요.", "감속 문장(제한 100의 80%)")
+    eq(d.map { it.key }.filterNot { it.startsWith("summary") }, listOf("highway.ahead", "highway.on", "rain.start", "rain.fast"), "고속도로·비 발화 ${d.map { it.key + "@" + it.t / 1000 }}")
+    eq(d[0].text, "앞 갈림길은 판교IC 방면이에요. 약속대로 일반도로로 가요.", "1.3.0 갈림길 예고(내비 방면 설명)")
+    eq(d[3].text, "빗길에 95예요. 80 아래로 줄여요.", "감속 문장(제한 100의 80%)")
     eq(sd.summary!!.statuses.filterValues { it == PromiseStatus.MISSED }.keys, setOf("highway", "rain"), "고속도로·비 못 지킴 ${sd.summary!!.statuses}")
     eq(sd.summary!!.lines, listOf("약속 5개 중 3개를 지켰어요. 다음엔 고속도로 대신·비 오는 날 조심도 같이 지켜요."), "고속도로·비 요약")
     for ((name, ss) in listOf("병원→집" to sa, "두 시간" to sb, "구역" to sc, "고속도로·비" to sd)) {
@@ -786,7 +789,7 @@ private fun s82() {
     val said = mutableListOf<Said>()
     val ses = TripSession(FIVE, FakeSpeaker(), p2.clock, listener = object : TripSession.Listener {
         override fun onSpeak(step: Step.Speak, nowMs: Long) { said += Said(nowMs - base, step.key, step.text, step.short, step.repeat, step.attempt) }
-    })
+    }, realClock = real2)
     ses.voiceInput = true
     ses.attachReplay(p2)
     var cur: Step.Speak? = null
@@ -847,7 +850,7 @@ private fun s83() {
     eq(VoicePhrases.status(Lang.KO, five, all - "dark" - "zone"), "약속 3개는 지키는 중이에요. 2개는 아직 몰라요.", "판단 전 둘 이상은 개수로")
     // 위험 + 판단 전: ‘나머지’가 판단 전 약속까지 지킨다고 말하지 않게 개수로
     val mix = noDest + ("zone" to PromiseStatus.AT_RISK)
-    eq(VoicePhrases.status(Lang.KO, five, mix), "약속 구역이 위험해요. 3개는 지키는 중이에요.", "위험 하나 + 판단 전 하나")
+    eq(VoicePhrases.status(Lang.KO, five, mix), "약속 구역이 위험해요. 3개는 지키는 중이에요. 해 지기 전 귀가는 아직 몰라요.", "위험 하나 + 판단 전 하나(1.3.0: 판단 전도 말함)")
     eq(VoicePhrases.status(Lang.KO, five, all + ("zone" to PromiseStatus.AT_RISK)), "약속 구역이 위험해요. 나머지는 지키는 중이에요.", "판단 전이 없으면 ‘나머지’ 그대로")
     // 해당 없음(NOT_APPLICABLE)은 판단 전으로 세지 않음
     eq(VoicePhrases.status(Lang.KO, five, all + ("highway" to PromiseStatus.NOT_APPLICABLE)), "약속 4개 모두 지키는 중이에요.", "해당 없음은 빼고 ‘모두’")

@@ -4,6 +4,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 1.3.0(PT 과제): 시동(부팅) 때 자동 시작 — BootReceiver -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- 위치(해 지기 전 귀가·약속 구역) — LocationManager(gps·fused). 리플레이는 위치 권한 없이도 동작 -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
@@ -61,11 +63,12 @@
             </intent-filter>
         </activity>
 
-        <!-- 주행 화면(11/5 Q036: DO 인정 가정) — 주행 중 허용 화면으로 선언. 약속 상태·마지막 문장·버튼 하나만(스크롤·목록·설정 없음).
+        <!-- 주행 화면(11/5 Q036: DO 인정 가정) — 주행 중 허용 화면으로 선언. 약속 상태·마지막 문장·큰 버튼 둘(다시 들려줘·말하기)만(스크롤·목록·설정 없음).
+             1.3.0: exported=false — 앱 안(정차 화면)에서만 띄움(다른 앱이 부를 이유가 없음)
              플랫폼이 인정하지 않는 환경(사이드로드, G1-B B1)에서는 가려지고, 앱은 차단을 감지해 음성만으로 내려감 -->
         <activity
             android:name=".DriveActivity"
-            android:exported="true"
+            android:exported="false"
             android:launchMode="singleTop"
             android:excludeFromRecents="true">
             <meta-data
@@ -73,14 +76,25 @@
                 android:value="true" />
         </activity>
 
-        <!-- 판정·발화 포그라운드 서비스: 10 Hz 세션 루프, 차량·내비·위치 어댑터, Pleos TTS, 기기 안 기록 -->
+        <!-- 판정·발화 포그라운드 서비스: 10 Hz 세션 루프, 차량·내비·위치 어댑터, Pleos TTS, 기기 안 기록.
+             1.3.0(11/7 codex F07): 시험 명령(replay·stt_text 등)을 다른 설치 앱이 부르지 못하게 DUMP 권한으로 보호 —
+             adb 셸(심사용 README 명령·실행 스크립트)은 이 권한을 가져 그대로 동작하고, 같은 앱(정차 화면)은 권한과 상관없이 부를 수 있음 -->
         <service
             android:name=".DrivePromiseService"
             android:exported="true"
+            android:permission="android.permission.DUMP"
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="driving promise voice companion" />
         </service>
+        <!-- 1.3.0(PT 과제): 시동(부팅) 때 서비스 자동 시작. BOOT_COMPLETED 는 시스템만 보내는 보호 방송 -->
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

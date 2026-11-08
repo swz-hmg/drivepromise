@@ -41,6 +41,7 @@ class PleosRouteSource(private val ctx: Context, private val main: Handler) : Ro
     override fun start(sink: Sink<NaviEvent>): AutoCloseable {
         this.sink = sink
         if (!inited) { inited = true; init() }
+        else lastSpeedLimit?.let { sink.accept(NaviEvent.SpeedLimit(System.currentTimeMillis(), it)) }   // 1.3.0(C11): 새 세션에 지금 도로 정보를 다시 줌(같은 값은 콜백이 다시 오지 않음)
         return AutoCloseable { if (this.sink === sink) this.sink = null }
     }
 
@@ -92,7 +93,8 @@ class PleosRouteSource(private val ctx: Context, private val main: Handler) : Ro
             }
             m == "onCurrentRoadSpeedLimit" -> {   // 매초 현재 도로 제한속도(없으면 0) — 11/5 에뮬레이터에서 확인한 콜백 이름
                 val lim = Regex("-?\\d+").find(s)?.value?.toIntOrNull() ?: return
-                if (lim > 0 && lim != lastSpeedLimit) { lastSpeedLimit = lim; emit(NaviEvent.SpeedLimit(now, lim)) }
+                // 1.3.0(C11): 0(정보 없음)으로 바뀐 것도 전달 — 고속도로를 나온 뒤 상태가 남지 않게(처음부터 0이면 보내지 않음)
+                if (lim >= 0 && lim != (lastSpeedLimit ?: 0)) { lastSpeedLimit = lim; emit(NaviEvent.SpeedLimit(now, lim)) }
             }
             m == "onDrivingInfo" || m == "onRouteStateInfo" -> {
                 val dur = Reflect.num(s, "duration")?.toInt()
@@ -106,7 +108,8 @@ class PleosRouteSource(private val ctx: Context, private val main: Handler) : Ro
                 val type = Reflect.word(first, "type") ?: "OTHER"
                 val dist = Reflect.num(first, "distance")?.toInt() ?: return
                 val road = Reflect.text(first, "roadName") ?: Reflect.text(first, "nextRoadName")
-                emit(NaviEvent.Tbt(now, dist, turnOf(type), road))
+                val toward = Reflect.text(first, "description")   // 1.3.0: 갈림길 방면(11/6 실측 ‘판교IC 방면’) — 고속도로 사전 예고(ADV-01)
+                emit(NaviEvent.Tbt(now, dist, turnOf(type), road, toward))
                 if (type.contains("ARRIVE", ignoreCase = true) && dist <= 20) emit(NaviEvent.Arrived(now))
             }
             m.contains("Arriv", ignoreCase = true) || m.contains("Destination", ignoreCase = true) && s.contains("ARRIV", ignoreCase = true) -> emit(NaviEvent.Arrived(now))
@@ -186,7 +189,7 @@ class PleosRouteSource(private val ctx: Context, private val main: Handler) : Ro
                 t.contains("LEFT") -> TurnType.LEFT
                 t.contains("RIGHT") -> TurnType.RIGHT
                 t.contains("EXIT") || t.contains("RAMP") || t.contains("IC") -> TurnType.EXIT
-                t.contains("MERGE") || t.contains("JOIN") -> TurnType.MERGE
+                t.contains("MERGE") || t.contains("JOIN") || t.contains("ENTR") || t.contains("HIGHWAY") || t.contains("EXPRESS") -> TurnType.MERGE
                 t.contains("STRAIGHT") || t.contains("GO") -> TurnType.STRAIGHT
                 else -> TurnType.OTHER
             }

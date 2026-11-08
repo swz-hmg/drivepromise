@@ -81,7 +81,7 @@ object Specs {
         "S39 시간 읽기 — 한 시간 50분·두 시간·두 시간 5분 / 2 hours 5 minutes" to ::s39,
         "S40 영어 문장" to ::s40,
         "S41 미룸 조건 — 세워 둔 동안 미루고 출발하면 말함(버리지 않음)" to ::s41,
-    ) + EngineSpecs.all + SessionSpecs.all
+    ) + EngineSpecs.all + SessionSpecs.all + ReviewSpecs.all
 }
 
 // ---------------------------------------------------------------- 도우미
@@ -407,11 +407,12 @@ private fun s15() {
     val sch = sched()
     sch.submit(info("i"), 0)
     for (k in 1..3) {
-        val s = sch.tick(w(k * 1_000L), true) as Step.Speak
+        val s = sch.tick(w(k * 3_000L), true) as Step.Speak
         eq(s.attempt, k, "시도 번호")
-        sch.failed(s.id, k * 1_000L + 10, "engine")
+        sch.failed(s.id, k * 3_000L + 10, "engine")
+        if (k < 3) eq(sch.tick(w(k * 3_000L + 1_000), true), Step.Idle, "1.3.0: 오류 뒤 2초 안엔 다시 하지 않음")
     }
-    eq(sch.tick(w(5_000), true), Step.Idle, "세 번 실패 뒤 대기 없음")
+    eq(sch.tick(w(12_000), true), Step.Idle, "세 번 실패 뒤 대기 없음")
     eq(sch.digest.map { it.key to it.reason }, listOf("i" to DigestReason.TTS_FAILED), "요약으로")
 }
 
@@ -522,7 +523,7 @@ private fun s24() {
     eq(sim.yields, listOf(1_000L), "효과음 시작에 물러섬")
     eq(sim.spk.stopped.size, 1, "TTS 멈춤 1번")
     val sp = led.events.filterIsInstance<LedgerEvent.Spoken>()
-    eq(sp.map { Triple(it.tMillis, it.yields, it.endMs) }, listOf(Triple(4_800L, 1, 6_800L)), "끝까지 들려준 기록")
+    eq(sp.map { Triple(it.tMillis, it.yields, it.endMs) }, listOf(Triple(4_800L, 1, 7_600L)), "끝까지 들려준 기록(1.3.0: 길이 = 선언값과 글자 수 길이 중 큰 쪽)")
 }
 
 // ---------------------------------------------------------------- 2시간 쉬기
@@ -534,8 +535,8 @@ private fun s25() {
         listOf(
             6_600_000L to "10분쯤 뒤면 두 시간이에요. 다음 쉴 곳에서 쉬어 가요.",
             7_200_000L to "두 시간째예요. 약속대로 쉬어 가요.",
-            8_103_500L to "쉬지 않고 두 시간 15분째예요. 가까운 곳에 잠깐 세워요.",
-            9_007_000L to "쉬지 않고 두 시간 30분째예요. 가까운 곳에 잠깐 세워요.",
+            8_103_600L to "쉬지 않고 두 시간 15분째예요. 가까운 곳에 잠깐 세워요.",   // 1.3.0: 본 알림(20자) 3.6초 뒤 15분
+            9_009_400L to "쉬지 않고 두 시간 30분째예요. 가까운 곳에 잠깐 세워요.",   // 1.3.0: 앞 반복 문장(33자) 길이 5.75초(100 ms 걸음으로 5.8초) 뒤 15분
         ),
         "예고·본 알림·반복 2번",
     )
@@ -577,7 +578,7 @@ private fun s28() {
     r.run(0, 17 * MIN)
     eq(
         r.sim.log.map { it.t to it.text },
-        listOf(60_000L to "두 시간째예요. 약속대로 쉬어 가요.", 963_500L to "쉬지 않고 두 시간 1분째예요. 가까운 곳에 잠깐 세워요."),
+        listOf(60_000L to "두 시간째예요. 약속대로 쉬어 가요.", 963_600L to "쉬지 않고 두 시간 1분째예요. 가까운 곳에 잠깐 세워요."),
         "14분 정차 뒤 미룬 반복",
     )
     eq(r.ledger.events.count { it is LedgerEvent.RestTaken }, 0, "쉼 아님")
@@ -611,7 +612,7 @@ private fun s31() {
 private fun s32() {
     val led = MemoryLedger()
     val last = 1_000_000L
-    val st = RestTracker.State(100 * MIN, last, headsUpDone = false, mainDone = false)
+    val st = RestTracker.State(100 * MIN, last, headsUpDone = false, mainDone = false, parkedAtSave = true)   // 1.3.0: 저장 때 P였다는 근거가 있어야 꺼진 시간을 쉼으로
     val a = RestTracker(RestPolicy(), sched(), led)
     a.restore(st, last + 16 * MIN)
     eq(a.drivingMs, 0L, "16분 꺼짐 = 쉼")

@@ -40,7 +40,7 @@ data class SayCtx(val world: World, val repeat: Int, val short: Boolean)
 class Utterance(
     val key: String,
     val priority: Priority,
-    /** 예상 길이(시니어용 느린 발화 기준). 4초 이하 */
+    /** 선언 길이(4초 이하). 1.3.0: 실제 창 검사는 이 값과 글자 수로 잰 길이([SpeechScheduler.needMs]) 중 큰 쪽 — 11/7 실측 49자 8.0초 */
     val estMs: Long,
     val render: (SayCtx) -> String,
     val deadlineAtMs: Long? = null,
@@ -93,6 +93,16 @@ data class QuietPolicy(
     val longGapExtraMs: Long = 4_000,
     /** TTS 오류가 이만큼이면 요약으로 */
     val maxFailures: Int = 3,
+    /** 1.3.0(C05): 글자당 말하는 시간 — Pleos TTS ON_DEVICE 실측(11/7: 49자 8.02초·26자 4.08초 ≈ 160 ms/자, 여유를 둬 165) */
+    val msPerCharKo: Long = 165,
+    val msPerCharEn: Long = 75,
+    /** 글자 수 길이에 더하는 여유(시작 지연·끝 묵음) */
+    val speechPadMs: Long = 300,
+    /** 1.3.0(C14): TTS 오류 뒤 같은 말을 다시 해 보기까지 기다림 */
+    val failRetryMs: Long = 2_000,
+    /** 1.3.0(C14): 완료 소식이 이만큼(예상 길이 × 배수, 최소값) 없으면 실패로 보고 멈춤 — 콜백 누락에 말이 영원히 막히지 않게 */
+    val watchdogFactor: Double = 2.5,
+    val watchdogMinMs: Long = 15_000,
 )
 
 /** 2시간마다 쉬기 — 늦은알림정책 v0.1. ★ headsUpCutoffMin은 코어 계약 v0.1에서 추가(예고와 본 알림이 붙지 않게) */
@@ -105,6 +115,8 @@ data class RestPolicy(
     val restResetMin: Int = 15,
     /** 본 알림 때 도착이 이 시간 안이면 ‘도착하면 쉬어요’(설계 후보 — G2에서 수용성 확인). 0이면 끔 */
     val arrivalSoonMin: Int = 15,
+    /** 1.3.0(R08): 저장 때 차가 세워져 있지 않았어도 이만큼 꺼져 있었으면 쉼으로 봄(밤새 꺼진 경우 등) */
+    val restoreAssumeRestMin: Int = 60,
     val estMs: Long = 3_500,
     val estShortMs: Long = 2_000,
 ) {

@@ -35,6 +35,11 @@
    "remainM": 8200
   },
   {
+   "t": 5,
+   "type": "speedLimit",
+   "kph": 50
+  },
+  {
    "t": 12,
    "type": "tbt",
    "turn": "LEFT",
@@ -73,7 +78,8 @@
   {
    "t": 0,
    "gear": "D",
-   "speedKph": 0
+   "speedKph": 0,
+   "wiper": "OFF"
   },
   {
    "t": 5,

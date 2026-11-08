@@ -6,6 +6,7 @@ import app.drivepromise.core.model.GeoFix
 import app.drivepromise.core.model.NaviEvent
 import app.drivepromise.core.model.Promise
 import app.drivepromise.core.model.PromiseStatus
+import app.drivepromise.core.model.TurnType
 import app.drivepromise.core.model.Wiper
 import app.drivepromise.core.plan.SolarCalc
 import app.drivepromise.core.scene.PromisePhrases
@@ -43,6 +44,16 @@ data class EnginePolicy(
     /** 해 지기 전 귀가: 위험 → 정상으로 되돌리는 여유(깜빡임 방지) */
     val darkHysteresisMs: Long = 5 * 60_000,
     val zone: ZoneId = ZoneId.of("Asia/Seoul"),
+    /** 1.3.0(C03): 마지막 위치가 이보다 오래되면 구역 판정은 ‘모름’(codex R03 — 하루 지난 좌표로 ‘지키는 중’이던 문제). 리플레이 트립 간격(최대 약 1분)보다 넉넉히 */
+    val fixTtlMs: Long = 5 * 60_000,
+    /** 1.3.0(C09): ‘구역 끝으로 가는 중’ = 차가 움직이고, 이 시간 동안 경계 쪽으로 이만큼 이상 다가감(GPS 흔들림 σ≈3 m에 오경보 200/200이던 문제) */
+    val zoneEdgeWindowMs: Long = 10_000,
+    val zoneEdgeMoveM: Double = 15.0,
+    /** 1.3.0(PT 과제 ADV-01): 고속도로로 들어가는 갈림길 예고 — TBT가 진출입(EXIT·MERGE)이고 방면 설명에 이 말이 있을 때, 이 거리 안 */
+    val highwayAhead: Boolean = true,
+    val highwayAheadWords: List<String> = listOf("IC", "JC", "고속도로", "고속국도", "톨게이트", "나들목", "Expressway"),
+    val highwayAheadMinM: Int = 150,
+    val highwayAheadMaxM: Int = 1_500,
 )
 
 /**
@@ -81,6 +92,14 @@ class PromiseEngine(
     private var outside = false
     private var outsideEver = false    // 11/5: 구역을 한 번이라도 벗어났으면 주행 끝 판정은 못 지킴(고속도로와 같은 규칙)
     private var tripEnded = false
+    // 1.3.0(C03): 신호를 한 번이라도 받았는가 — 못 받았으면 주행 끝 판정은 ‘모름’(‘모르면 판단 보류’)
+    private var roadSeen = false
+    private var wiperSeen = false
+    // 1.3.0(C09): 구역 경계까지 거리 기록(위치가 바뀔 때만) — 10초 창으로 ‘바깥으로 가는 중’ 판단
+    private val zoneHist = ArrayDeque<Pair<Long, Double>>()
+    // 1.3.0(ADV-01): 아직 판단하지 않은 갈림길 TBT · 이미 예고한 방면
+    private var aheadTbt: NaviEvent.Tbt? = null
+    private var aheadWarned: String? = null
 
     val statuses: Map<String, PromiseStatus> get() = status.toMap()
     val isRaining: Boolean get() = raining
@@ -89,10 +108,11 @@ class PromiseEngine(
     fun onNavi(e: NaviEvent) {
         when (e) {
             is NaviEvent.Trip -> etaEpochMs = e.etaEpochMs
-            is NaviEvent.SpeedLimit -> speedLimitKph = e.kph
-            is NaviEvent.Tbt -> if (e.road != null) road = e.road
-            is NaviEvent.Arrived -> arrivedAt = e.tMillis
-            is NaviEvent.RouteError -> etaEpochMs = null
+            is NaviEvent.SpeedLimit -> { speedLimitKph = e.kph; if (e.kph > 0) roadSeen = true }   // 0 = 이 도로 정보 없음(1.3.0: 어댑터가 0도 전달)
+            is NaviEvent.Tbt -> { if (e.road != null) { road = e.road; roadSeen = true }; aheadTbt = e }
+            is NaviEvent.Arrived -> { arrivedAt = e.tMillis; speedLimitKph = null; road = null }
+            // 1.3.0(C11): 경로 취소·오류면 도로 정보도 비움 — 고속도로 상태가 남아 있던 문제(codex R14)
+            is NaviEvent.RouteError -> { etaEpochMs = null; speedLimitKph = null; road = null; aheadTbt = null }
             is NaviEvent.Caution -> Unit
         }
     }
@@ -122,8 +142,9 @@ class PromiseEngine(
             val cur = status[p.id] ?: PromiseStatus.UNKNOWN
             val fin = when (p) {
                 is Promise.HomeBeforeDark -> sunset(w)?.let { ss -> if (now <= ss) PromiseStatus.KEPT else PromiseStatus.MISSED } ?: cur
-                is Promise.AvoidHighway -> if (highwayEver) PromiseStatus.MISSED else PromiseStatus.KEPT
-                is Promise.RainCare -> if (rainFastEver || cur == PromiseStatus.AT_RISK || cur == PromiseStatus.MISSED) PromiseStatus.MISSED else PromiseStatus.KEPT
+                // 1.3.0(C03): 도로·와이퍼 신호를 한 번도 못 받았으면 ‘모름’ — 빗길은 30초 이어진 과속만 ‘못 지킴’(끝 순간 1틱 과속은 세지 않음)
+                is Promise.AvoidHighway -> if (highwayEver) PromiseStatus.MISSED else if (!roadSeen) PromiseStatus.UNKNOWN else PromiseStatus.KEPT
+                is Promise.RainCare -> if (rainFastEver) PromiseStatus.MISSED else if (!wiperSeen) PromiseStatus.UNKNOWN else PromiseStatus.KEPT
                 is Promise.RestEvery -> if (w.drivingMs >= p.everyMin * 60_000L) PromiseStatus.MISSED else PromiseStatus.KEPT
                 is Promise.StayInZone -> if (outside || outsideEver) PromiseStatus.MISSED else if (cur == PromiseStatus.UNKNOWN) cur else PromiseStatus.KEPT
             }
@@ -162,7 +183,8 @@ class PromiseEngine(
             submit(p.id, "risk", now, Priority.PROMISE, 4_000, 2_000, Validity.UNTIL_DEADLINE, deadline = ss,
                 stillValid = { ww -> arrivedAt == null && (arrival(ww)?.let { it > deadline - policy.darkHysteresisMs } ?: true) },
                 render = { c -> PromisePhrases.darkRisk(c.world.lang, ss, arrival(c.world) ?: arr, policy.zone, c.short) },
-                followup = { ww -> if (arrivedAt == null) nightLine(p.id, ww.tMillis, deadline) else null })
+                // 1.3.0(C01): 밤 문장은 실제로 해가 진 뒤에만 — 위험이 풀려 지워질 때 낮에 “해가 졌어요”가 나오던 문제(codex R04)
+                followup = { ww -> if (arrivedAt == null && ww.tMillis > ss) nightLine(p.id, ww.tMillis, deadline) else null })
         }
         if (!risk) darkWarned = false   // 다시 늦어지면 한 번 더 말함(히스테리시스 안에서는 유지)
         return if (risk) PromiseStatus.AT_RISK else PromiseStatus.ON_TRACK
@@ -180,6 +202,7 @@ class PromiseEngine(
         val byLimit = (speedLimitKph ?: 0) >= policy.highwaySpeedLimitKph
         val byRoad = road?.let { r -> policy.highwayRoadKeywords.any { r.contains(it, ignoreCase = true) } } ?: false
         val now = byLimit || byRoad
+        if (!now) aheadCheck(p, w)
         if (now && !onHighway) {
             highwayEver = true
             submit(p.id, "on", w.tMillis, Priority.PROMISE, 4_000, 2_000, Validity.WHILE_STATE, deadline = w.tMillis,
@@ -189,10 +212,30 @@ class PromiseEngine(
         return if (now) PromiseStatus.MISSED else if (highwayEver) PromiseStatus.MISSED else PromiseStatus.ON_TRACK
     }
 
+    /** 1.3.0(PT 과제 ADV-01): 고속도로 진출입 갈림길 예고 — 들어서기 전에 한 번(같은 방면은 한 번만) */
+    private fun aheadCheck(p: Promise.AvoidHighway, w: World) {
+        val t = aheadTbt ?: return
+        if (!policy.highwayAhead) return
+        aheadTbt = null
+        val toward = t.toward?.trim().orEmpty()
+        if (toward.isEmpty() || toward == aheadWarned) return
+        if (t.turn != TurnType.EXIT && t.turn != TurnType.MERGE) return
+        if (t.distM !in policy.highwayAheadMinM..policy.highwayAheadMaxM) return
+        val hit = policy.highwayAheadWords.any { k -> if (k.all { it.isUpperCase() }) toward.contains(k) else toward.contains(k, ignoreCase = true) }
+        if (!hit) return
+        aheadWarned = toward
+        val v = maxOf((w.vehicle?.speedMps ?: 0f).toDouble(), 5.0)
+        val until = w.tMillis + (t.distM / v * 1000).toLong().coerceIn(10_000L, 90_000L)
+        submit(p.id, "ahead", w.tMillis, Priority.PROMISE, 4_000, 2_000, Validity.UNTIL_DEADLINE, deadline = until,
+            stillValid = { ww -> !onHighway && ww.tMillis <= until },
+            render = { c -> PromisePhrases.highwayAhead(c.world.lang, toward, c.short) })
+    }
+
     // ---------------------------------------------------------------- 비 오는 날
     private fun rain(p: Promise.RainCare, w: World): PromiseStatus {
         val v = w.vehicle ?: return if (raining) PromiseStatus.ON_TRACK else PromiseStatus.UNKNOWN
         val now = w.tMillis
+        if (v.wiper != Wiper.UNKNOWN) wiperSeen = true
         val wiping = v.wiper == Wiper.INTERMITTENT || v.wiper == Wiper.LOW || v.wiper == Wiper.HIGH
         if (wiping) { wiperOffSince = null; if (wiperOnSince == null) wiperOnSince = now } else { wiperOnSince = null; if (wiperOffSince == null) wiperOffSince = now }
         if (!raining && wiperOnSince != null && now - wiperOnSince!! >= policy.rainOnMs) {
@@ -230,8 +273,14 @@ class PromiseEngine(
     // ---------------------------------------------------------------- 약속 구역
     private fun zone(p: Promise.StayInZone, w: World): PromiseStatus {
         val f = w.fix ?: lastFix ?: return PromiseStatus.UNKNOWN
+        if (w.tMillis - f.tMillis > policy.fixTtlMs) return PromiseStatus.UNKNOWN   // 1.3.0(C03): 오래된 위치로는 판단하지 않음
         val d = distanceM(f.lat, f.lon, p.lat, p.lon)
-        val movingOut = prevDist?.let { d > it + 0.5 } ?: false
+        // 1.3.0(C09): 위치가 바뀔 때만 기록하고, 10초 전(없으면 3초 이상 된 가장 오래된 기록)보다 15 m 이상 멀어졌고 차가 움직일 때만 ‘바깥으로’
+        if (zoneHist.isEmpty() || zoneHist.last().first < f.tMillis) zoneHist.addLast(f.tMillis to d)
+        while (zoneHist.size > 2 && zoneHist[1].first <= f.tMillis - policy.zoneEdgeWindowMs) zoneHist.removeFirst()
+        val ref = zoneHist.first()
+        val moving = w.vehicle?.stopped != true
+        val movingOut = moving && f.tMillis - ref.first >= 3_000 && d - ref.second >= policy.zoneEdgeMoveM
         prevDist = d
         val now = w.tMillis
         val isOut = if (outside) d > p.radiusM - policy.zoneBackM else d > p.radiusM   // 히스테리시스: 나갈 때는 경계, 돌아올 때는 경계 안쪽 zoneBackM

@@ -123,7 +123,7 @@ private fun s45() {
     r.etaAt = { eta }
     r.run(t0, t0 + 5_000)
     eq(r.status("dark"), PromiseStatus.AT_RISK, "위험")
-    eq(r.sim.log.map { it.text }, listOf("이대로면 오후 5시 28분 도착, 해는 오후 5시 22분에 져요. 쉬지 말고 바로 가요."), "경고 한 번, 그때 ETA")
+    eq(r.sim.log.map { it.text }, listOf("이대로면 5시 28분 도착, 해는 5시 22분에 져요."), "경고 한 번, 그때 ETA")
     eta = 10 * MIN   // 길이 뚫림: 16:40 도착(마감 16:52 − 여유 5분보다 앞)
     r.run(t0 + 5_100, t0 + 10_000)
     eq(r.status("dark"), PromiseStatus.ON_TRACK, "정상으로")
@@ -286,10 +286,10 @@ private fun s52() {
         t += 100
     }
     ok(r.sim.log.any { it.key == "dark.risk" && it.t == base }, "출발 직후 경고: ${r.sim.log}")
-    eq(r.sim.log.first().text, "이대로면 오후 5시 28분 도착, 해는 오후 5시 22분에 져요. 쉬지 말고 바로 가요.", "경고 문장")
+    eq(r.sim.log.first().text, "이대로면 5시 28분 도착, 해는 5시 22분에 져요.", "경고 문장")
     eq(r.status("dark"), PromiseStatus.KEPT, "실제로는 150초 뒤(16:52:30) 도착 — 해 지기 전")
     val fin = r.eng.endTrip(r.world(end))
-    eq(fin["highway"], PromiseStatus.KEPT, "고속도로 없음")
+    eq(fin["highway"], PromiseStatus.UNKNOWN, "1.3.0: 도로 신호(제한속도·도로 이름)가 한 번도 없으면 ‘모름’ — 신호 없는 주행을 ‘지킴’으로 세지 않음")
     eq(fin["rest"], PromiseStatus.KEPT, "2시간 전 끝")
     ok(r.ledger.events.any { it is LedgerEvent.StatusChanged && it.promiseId == "dark" && it.to == "KEPT" }, "지킴 기록")
 }
@@ -336,5 +336,5 @@ private fun s56() {
     eq(PromisePhrases.koClock(kst(2026, 11, 14, 12, 0), Z), "오후 12시", "12:00")
     eq(PromisePhrases.koClock(kst(2026, 11, 14, 0, 5), Z), "오전 12시 5분", "00:05")
     eq(PromisePhrases.enClock(kst(2026, 11, 14, 17, 22), Z), "5:22 p.m.", "en")
-    eq(PromisePhrases.darkRisk(Lang.EN, kst(2026, 11, 14, 17, 22), kst(2026, 11, 14, 17, 28), Z, false), "At this pace you arrive 5:28 p.m. and the sun sets 5:22 p.m. — best not to stop.", "영어 경고")
+    eq(PromisePhrases.darkRisk(Lang.EN, kst(2026, 11, 14, 17, 22), kst(2026, 11, 14, 17, 28), Z, false), "At this pace you arrive 5:28 p.m.; sunset is 5:22 p.m.", "영어 경고")
 }

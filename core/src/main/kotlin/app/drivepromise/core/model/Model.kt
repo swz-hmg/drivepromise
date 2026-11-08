@@ -93,7 +93,9 @@ sealed interface NaviEvent {
     val tMillis: Long
 
     /** 다음 회전까지 거리(TBT). distM은 이벤트 시각 기준 */
-    data class Tbt(override val tMillis: Long, val distM: Int, val turn: TurnType, val road: String? = null) : NaviEvent
+    data class Tbt(override val tMillis: Long, val distM: Int, val turn: TurnType, val road: String? = null,
+                   /** 1.3.0: 갈림길 방면 설명(NaviHelper TBTInfo.description — 실측 ‘판교IC 방면’). 고속도로 사전 예고에만 씀 */
+                   val toward: String? = null) : NaviEvent
 
     data class Caution(override val tMillis: Long, val kind: CautionKind, val distM: Int, val raw: String = kind.name) : NaviEvent
 

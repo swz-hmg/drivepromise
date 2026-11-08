@@ -55,6 +55,12 @@ class MainActivity : Activity() {
     private lateinit var micBtn: Button
     private lateinit var afterQBtn: Button
     private lateinit var voiceView: TextView
+    // 1.3.0(PT 과제): 약속 정하기 — 가족과 함께 정차 중에만(이 화면은 DO 선언 없음 → 주행 중엔 플랫폼이 가림)
+    private val promiseBtns = LinkedHashMap<String, Button>()
+    private lateinit var restBtn: Button
+    private lateinit var marginBtn: Button
+    private lateinit var radiusBtn: Button
+    private lateinit var autoBtn: Button
     private val refresh = object : Runnable {
         override fun run() {
             render()
@@ -129,6 +135,15 @@ class MainActivity : Activity() {
         micBtn = button("🎤 말하기") { svc?.pushToTalk() }
         afterQBtn = button("질문 뒤 듣기: 켬") { svc?.let { it.setListenAfterQuestion(!it.listenAfterQuestion()) } }
         root.addView(row(micBtn, afterQBtn))
+        root.addView(text("약속 정하기(가족과 함께 · 세워 둔 동안)", 18f, color = SUB))
+        for (id in PROMISE_IDS) promiseBtns[id] = button(id) { svc?.let { it.setPromiseOn(id, !it.prefs.promiseOn(id)) } }
+        root.addView(row(*promiseBtns.values.toTypedArray()))
+        restBtn = button("쉬기") { svc?.let { it.setRestEvery(nextOf(REST_CHOICES, it.prefs.restEveryMin)) } }
+        marginBtn = button("여유") { svc?.let { it.setDarkMargin(nextOf(MARGIN_CHOICES, it.prefs.darkMarginMin)) } }
+        radiusBtn = button("반경") { svc?.let { it.setZoneRadius(nextOf(RADIUS_CHOICES, it.prefs.zoneRadiusM)) } }
+        root.addView(row(restBtn, marginBtn, radiusBtn))
+        autoBtn = button("자동 시작") { svc?.let { it.setAutoStart(!it.prefs.autoStart) } }
+        root.addView(row(button("지금 위치를 구역 중심으로") { svc?.setZoneHere() }, autoBtn))
         root.addView(row(
             button("경로 계획: 판교역") { svc?.plan("판교역", 37.3948, 127.1112) },
             button("주행 끝") { svc?.endTrip() },
@@ -185,6 +200,7 @@ class MainActivity : Activity() {
         screenBtn.text = if (s.prefs.screenWhileDriving == ScreenWhileDriving.ON) (if (lang == Lang.KO) "주행 중 화면: 켜기" else "Screen while driving: on") else (if (lang == Lang.KO) "주행 중 화면: 음성만" else "Screen while driving: voice only")
         assumeBtn.text = (if (lang == Lang.KO) "DO 인정 가정: " else "Assume DO: ") + (if (s.prefs.assumeDo) (if (lang == Lang.KO) "켬" else "on") else (if (lang == Lang.KO) "끔" else "off"))
         renderVoice(s, lang)
+        renderSettings(s, lang)
         // 주행 시작 + 화면 허용 → 주행 화면을 한 번만 띄움(이 화면이 앞에 있을 때만 — 뒤에 있으면 플랫폼 규칙상 띄우지 않음)
         val seq = s.screen.launchSeq
         if (seq != launchedSeq && sm == PresentationMode.DRIVE_DO) {
@@ -243,6 +259,22 @@ class MainActivity : Activity() {
     }
 
     // ---------------------------------------------------------------- 작은 도우미
+    /** 1.3.0: 약속 정하기 버튼 글자 — 켬/끔과 값 */
+    private fun renderSettings(s: DrivePromiseService, lang: Lang) {
+        val ko = lang == Lang.KO
+        for ((id, b) in promiseBtns) {
+            val on = s.prefs.promiseOn(id)
+            b.text = (if (ko) PROMISE_KO[id] else PROMISE_EN[id]) + ": " + (if (on) (if (ko) "켬" else "on") else (if (ko) "끔" else "off"))
+        }
+        val r = s.prefs.restEveryMin
+        restBtn.text = if (ko) "쉬기 간격: ${if (r % 60 == 0) "${r / 60}시간" else "${r}분"}" else "Rest every: $r min"
+        marginBtn.text = if (ko) "해 지기 전 여유: ${s.prefs.darkMarginMin}분" else "Before sunset: ${s.prefs.darkMarginMin} min"
+        radiusBtn.text = if (ko) "구역 반경: ${s.prefs.zoneRadiusM / 1000} km" else "Zone radius: ${s.prefs.zoneRadiusM / 1000} km"
+        autoBtn.text = (if (ko) "시동 때 자동 시작: " else "Start with ignition: ") + (if (s.prefs.autoStart) (if (ko) "켬" else "on") else (if (ko) "끔" else "off"))
+    }
+
+    private fun nextOf(choices: List<Int>, cur: Int): Int = choices.firstOrNull { it > cur } ?: choices.first()
+
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
     private fun text(s: String, sp: Float, bold: Boolean = false, color: Int = Color.WHITE): TextView = TextView(this).apply {
@@ -304,6 +336,13 @@ class MainActivity : Activity() {
     }
 
     companion object {
+        val PROMISE_IDS = app.drivepromise.store.Prefs.PROMISE_IDS
+        val PROMISE_KO = mapOf("dark" to "해 지기 전 귀가", "highway" to "고속도로 대신", "rain" to "비 오는 날 조심", "rest" to "쉬기", "zone" to "약속 구역")
+        val PROMISE_EN = mapOf("dark" to "Home before dark", "highway" to "No highways", "rain" to "Care in rain", "rest" to "Rest", "zone" to "Stay in zone")
+        val REST_CHOICES = listOf(60, 90, 120)
+        val MARGIN_CHOICES = listOf(15, 30, 45, 60)
+        val RADIUS_CHOICES = listOf(3_000, 5_000, 10_000, 20_000)
+
         /** 기록 칸에 보여 줄 이벤트(어댑터의 매초 콜백은 뺌) */
         private val SHOW = listOf("speak", "phase", "status", "plan", "summary", "replay_start", "session", "cmd", "tts_init", "tts_init_error", "vsdk", "prop_reg", "location", "loc_src", "geofence", "zone_xcheck", "perm", "mode", "screen", "do_check", "uxr", "repeat",
             "stt_init", "stt_listen", "stt_result", "stt_error", "voice_cmd", "ptt")

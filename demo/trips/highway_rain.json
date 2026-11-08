@@ -169,6 +169,13 @@
    "kph": 60
   },
   {
+   "t": 40,
+   "type": "tbt",
+   "turn": "MERGE",
+   "distM": 900,
+   "toward": "판교IC 방면"
+  },
+  {
    "t": 60,
    "type": "speedLimit",
    "kph": 100

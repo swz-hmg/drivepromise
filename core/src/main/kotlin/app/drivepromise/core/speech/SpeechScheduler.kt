@@ -20,12 +20,14 @@ class SpeechScheduler(
         val id: Long,
         val u: Utterance,
         val createdAt: Long,
-        val notBefore: Long,
+        var notBefore: Long,
         val repeat: Int,
     ) {
         var yields = 0
         var failures = 0
         var startedAt = 0L
+        var startedReal = 0L
+        var needMs = 0L
     }
 
     private val queue = mutableListOf<Pending>()
@@ -37,6 +39,26 @@ class SpeechScheduler(
     val digest: List<DigestItem> get() = digestItems.toList()
     val pendingKeys: List<String> get() = ordered().map { it.u.key }
     val speakingKey: String? get() = speaking?.u?.key
+    val speakingId: Long? get() = speaking?.id
+
+    /**
+     * 1.3.0(C05): 이 문장을 말하는 데 걸릴 시간 — 선언 길이와 글자 수 길이 중 큰 쪽. 회전 앞 ‘끝낼 시간 확보’를 이것으로 봅니다.
+     * 4초로 선언한 49자 문장이 실제 8.0초였던 11/7 실측(codex) 때문 — 선언값만 보면 침묵 구간으로 최대 4초 넘칠 수 있었음.
+     */
+    fun needMs(declaredMs: Long, text: String, lang: Lang): Long {
+        val per = if (lang == Lang.EN) policy.msPerCharEn else policy.msPerCharKo
+        return maxOf(declaredMs, text.trim().length * per + policy.speechPadMs)   // 글자 수는 띄어쓰기 포함(실측 기록 chars와 같은 기준)
+    }
+
+    /**
+     * 1.3.0(C14): 말하는 중인데 완료 소식이 너무 늦으면 그 말의 id(감시 타이머) — 아니면 null.
+     * 시각은 실제 시계(realNowMs) — 리플레이는 가상 시계가 배속으로 가지만 말소리는 실제 시간으로 나오기 때문
+     */
+    fun watchdog(realNowMs: Long): Long? {
+        val p = speaking ?: return null
+        val limit = maxOf(policy.watchdogMinMs, (p.needMs * policy.watchdogFactor).toLong())
+        return if (realNowMs - p.startedReal > limit) p.id else null
+    }
 
     /**
      * ‘조용히’(음성 명령) — 이 시각까지 INFO 말은 미룸. 안전·약속(SAFETY·PROMISE)과, 운전자가 직접 청한 말
@@ -59,7 +81,7 @@ class SpeechScheduler(
     }
 
     /** voiceFree = [VoiceArbiter.canStart] (내비가 말하는 중·끝난 직후면 false) */
-    fun tick(w: World, voiceFree: Boolean): Step {
+    fun tick(w: World, voiceFree: Boolean, realNowMs: Long = w.tMillis): Step {
         val now = w.tMillis
         for (p in queue.toList()) housekeep(p, w)   // 말할 수 없더라도 유효성 정리는 매번
         if (speaking != null || !voiceFree) return Step.Idle
@@ -67,12 +89,14 @@ class SpeechScheduler(
             if (p.notBefore > now || !p.u.speakWhen(w)) continue
             if (p.u.priority == Priority.INFO && now < muteInfoUntilMs && p.u.key != "repeat" && !p.u.key.startsWith("voice.")) continue
             val short = p.yields > 0
-            val need = if (short) p.u.estShortMs else p.u.estMs
+            val text = p.u.render(SayCtx(w, p.repeat, short))   // 1.3.0: 먼저 만들어 실제 길이로 창을 봄(render는 값만 읽음)
+            val need = needMs(if (short) p.u.estShortMs else p.u.estMs, text, w.lang)
             if (!windowOk(p, now, need)) continue
             queue.remove(p)
             speaking = p
             p.startedAt = now
-            val text = p.u.render(SayCtx(w, p.repeat, short))
+            p.startedReal = realNowMs
+            p.needMs = need
             return Step.Speak(p.id, p.u.key, text, p.u.priority, short, p.repeat, p.yields + p.failures + 1, need)
         }
         return Step.Idle
@@ -109,6 +133,7 @@ class SpeechScheduler(
             toDigest(nowMs, p.u, DigestReason.TTS_FAILED)
             ledger.accept(LedgerEvent.Dropped(nowMs, p.u.key, "tts_failed:$cause"))
         } else {
+            p.notBefore = nowMs + policy.failRetryMs   // 1.3.0(C14): 바로 다시 하지 않고 잠깐 뒤(TTS 서비스 재연결 시간)
             queue += p
         }
     }

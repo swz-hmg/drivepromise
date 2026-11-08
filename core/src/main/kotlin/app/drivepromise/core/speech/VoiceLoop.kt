@@ -19,8 +19,20 @@ class VoiceLoop(
     private val speaker: Speaker,
     var usage: AudioUsage = AudioUsage.NAVIGATION_GUIDANCE,
 ) {
-    fun tick(w: World): Step {
-        val s = scheduler.tick(w, arbiter.canStart(w.tMillis))
+    /** 1.3.0(C14): 감시 타이머가 말을 멈췄을 때(id, key) — 앱이 기록 */
+    var onWatchdog: (Long, String) -> Unit = { _, _ -> }
+
+    /** realNowMs = 실제 시계(감시 타이머용). 리플레이가 아니면 w.tMillis 와 같음 */
+    fun tick(w: World, realNowMs: Long = w.tMillis): Step {
+        val stuck = scheduler.watchdog(realNowMs)
+        if (stuck != null) {   // 완료·오류 소식 없이 너무 오래 — 멈추고 오류로 처리(3번이면 요약으로, 아니면 2초 뒤 다시)
+            val key = scheduler.speakingKey ?: "?"
+            speaker.stop(stuck)
+            arbiter.finished(stuck)
+            scheduler.failed(stuck, w.tMillis, "watchdog")
+            onWatchdog(stuck, key)
+        }
+        val s = scheduler.tick(w, arbiter.canStart(w.tMillis), realNowMs)
         if (s is Step.Speak) {
             arbiter.started(s.id)
             speaker.speak(s.id, s.text, usage)

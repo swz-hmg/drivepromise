@@ -313,7 +313,7 @@ class PleosFusedLocationSource(
         val first = (src == "pleos" && pleosFixes == 1) || (src == "lm" && fallbackFixes == 1)
         if (!first && !moved && prev != null && now - prev.second < 30_000L) return
         lastLog = f to now
-        L.log("loc_fix", "src" to src, "lat" to r4(f.lat), "lon" to r4(f.lon),
+        L.log("loc_fix", "src" to src, "lat" to r3(f.lat), "lon" to r3(f.lon),   // 1.3.0(C15): 기록 좌표는 소수 3자리(약 100 m)
             "n" to (if (src == "pleos") pleosFixes else fallbackFixes), "hd" to f.bearingDeg, "conf" to conf)
     }
 
@@ -327,7 +327,6 @@ class PleosFusedLocationSource(
         private fun valid(lat: Double, lon: Double) =
             lat.isFinite() && lon.isFinite() && lat in -90.0..90.0 && lon in -180.0..180.0 && !(lat == 0.0 && lon == 0.0)
 
-        private fun r4(x: Double) = String.format(java.util.Locale.US, "%.4f", x)
         private fun r3(x: Double) = String.format(java.util.Locale.US, "%.3f", x)
     }
 }

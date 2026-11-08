@@ -33,7 +33,7 @@ DrivePromise core contract v0.1 — frozen on 2026-11-05. 실차(Pleos·AAOS 어
 | `session` | **TripSession · SessionPolicy** — 상태 기계(PARKED→DRIVING→ENDED)와 부품 배선(앱·리플레이·시험이 같은 코드) · `lastSpoken` · `repeatLast()`(11/5 Q036) | v0.1(11/8 작업을 11/5에 당김) 구현·시험 |
 | `ui` | **PresentationMode · Capability · ScreenWhileDriving · ModeResolver** — 화면 모드(정차 화면 / 주행 화면+음성 / 주행 음성만) 결정표·전환 규칙·능력 판단(화면모드전환설계 v0.1, 11/5 Q036 구현) | 구현·시험 |
 | `voice` | **VoiceIntent · ListenTrigger · VoiceCommands** — 음성 명령 닫힌 문법(한·영), 모르면 UNKNOWN(11/6 Q040, STT C안) · 대답 문장은 `scene.VoicePhrases` | 구현·시험 |
-| `forecast` | ConflictForecaster(경로 앞 고속도로 진입 예고) | 11/7 |
+| `forecast` | ConflictForecaster(경로 앞 고속도로 진입 예고) | 1.3.0: 별도 패키지 대신 `engine.PromiseEngine`의 갈림길 예고(TBT 방면, `highway.ahead`)로 구현 — 경로 전체 ‘검색만’ API는 없어 다음 갈림길 하나만 봄 |
 
 ## 2. 모델 (`model`)
 
@@ -101,22 +101,25 @@ fun interface Clock { fun nowMs(): Long }
 | maxYieldsBeforeStopWindow | 2 | 두 번 끊긴 말은 신호 대기 창·확실한 틈에서만 |
 | longGapExtraMs | 4 000 | 확실한 틈 = 말 길이 + 4초 |
 | maxFailures | 3 | TTS 오류 3번이면 요약 |
+| msPerCharKo / msPerCharEn / speechPadMs | 165 / 75 / 300 | 1.3.0: 말 길이 = max(선언 길이, 글자 수 × 글자당 시간 + 0.3초) — 11/6 에뮬레이터 실측(한국어 49자 ≈ 8.1초) |
+| failRetryMs | 2 000 | 1.3.0: TTS 오류 뒤 2초 기다렸다 다시(바로 재시도해 3번을 한꺼번에 쓰는 일 방지) |
+| watchdogFactor / watchdogMinMs | 2.5 / 15 000 | 1.3.0: 재생 끝 알림이 이 시간(실제 시계) 안에 오지 않으면 말을 멈추고 실패로 셈(`VoiceLoop.onWatchdog`) |
 
-`RestPolicy`: targetMin 120 · leadMin 10 · headsUpCutoffMin 2 · repeatMin 15 · maxRepeats 2 · restResetMin 15 · arrivalSoonMin 15 · estMs 3 500 · estShortMs 2 000.
+`RestPolicy`: targetMin 120 · leadMin 10 · headsUpCutoffMin 2 · repeatMin 15 · maxRepeats 2 · restResetMin 15 · arrivalSoonMin 15 · estMs 3 500 · estShortMs 2 000 · restoreAssumeRestMin 60(1.3.0). 쉬기 간격을 바꾸면(`TripSession.restPolicyFor`) 예고 = min(10분, 간격/3), 최소 cutoff+1분.
 
 ### 4.3 말해도 되는 때 — `QuietWindows` (구현: `gate.QuietGate`, 11/5)
 
 ```kotlin
 interface QuietWindows {
     fun normal(nowMs: Long, needMs: Long): Boolean     // 회전 8초 전(좌회전 10초)~회전 뒤 8초 침묵, 예측 안내(300·100 m 앞 2.5초), 방향지시등 중 침묵
-    fun stopWindow(nowMs: Long): Boolean               // 정지선 대기 시작 2초 안(P6)
+    fun stopWindow(nowMs: Long): Boolean               // 정지선 대기 시작 2초 안(P6) — 1.3.0: 방향지시등 중·급제동 직후는 아님
     fun longGap(nowMs: Long, needMs: Long): Boolean    // 확실한 틈
 }
 ```
 
 ### 4.4 스케줄러 — `SpeechScheduler`
 
-API: `submit(u, now)` · `cancel(keyPrefix, now, reason)` · `tick(world, voiceFree): Step` (10 Hz) · `spoken(id, now)` · `yielded(id, now)` · `failed(id, now, cause)` · `endTrip(now)` · `digest` · `pendingKeys`.
+API: `submit(u, now)` · `cancel(keyPrefix, now, reason)` · `tick(world, voiceFree, realNowMs): Step` (10 Hz) · `spoken(id, now)` · `yielded(id, now)` · `failed(id, now, cause)` · `watchdog(realNowMs): Long?`(1.3.0) · `needMs(declared, text, lang)`(1.3.0) · `endTrip(now)` · `digest` · `pendingKeys`.
 
 ```text
 tick(w, voiceFree):
@@ -127,14 +130,17 @@ tick(w, voiceFree):
     if speaking ∨ ¬voiceFree: return Idle
     for p in order(SAFETY > PROMISE(마감 순) > INFO(먼저 온 순)):
         skip if p.notBefore > now ∨ ¬speakWhen(w)
-        need ← (p.yields > 0) ? estShort : est
+        text ← render(world, repeat, short)                     # 1.3.0: 먼저 그려서
+        need ← max((p.yields > 0) ? estShort : est, len(text) × msPerChar + pad)   # 글자 수로 다시 잼
         ok ← SAFETY
              ∨ (yields ≥ 2 ? stopWindow ∨ longGap(need + 4 s)
                 : normal(need) ∨ (PROMISE ∧ now ≥ deadline − 60 s ∧ stopWindow))
-        if ok: return Speak(id, key, render(world, repeat, short), …, estMs = need)
+        if ok: return Speak(id, key, text, …, estMs = need)   # startedReal ← realNowMs (감시 타이머)
     return Idle
 spoken(id): 기록 Spoken · 반복이 남았으면 now + repeatAfter 뒤로 다시 넣음
 yielded(id): yields + 1, 다시 대기(다음엔 짧은 문장)
+failed(id): failures + 1, notBefore ← now + 2 s (3번이면 요약)
+watchdog(realNow): 말하는 중 ∧ realNow − startedReal > max(15 s, need × 2.5) → 그 id
 ```
 
 ### 4.5 내비에 물러서기 — `VoiceArbiter` (G1-B v0.6 실측)
@@ -159,8 +165,9 @@ yielded(id): yields + 1, 다시 대기(다음엔 짧은 문장)
 | 도착 15분 안 | “곧 도착이에요. 도착하면 꼭 쉬어요.” — 질문이 아니므로 듣지 않음(1.2.1, S81) | 설계 후보(G2 수용성) |
 | 쉼 뒤 출발 | “잘 쉬셨어요. 약속 지키셨습니다.” | INFO, 예고·본 알림이 있었던 구간만 |
 | 쉬지 못하고 도착 | “오늘은 두 시간 40분을 쉬지 않고 운전하셨어요. 다음엔 한 시간 50분쯤 쉬어 가요.” | `endTrip()`이 돌려줌(요약 담당이 말함) |
+| 두 시간을 넘겼지만 알림 뒤 쉼(1.3.0) | “오늘은 두 시간을 넘겨 운전했지만, 알림 뒤 쉬셨어요.” — 판정은 Q027대로 ‘지킴’(알림 뒤 P 15분), 넘긴 사실은 따로 말함 | `endTrip()` · `overTargetEver` |
 
-쉼 = 기어 P 또는 시동 끔 15분 이상(앱이 꺼져 있던 시간 포함, `state()`/`restore()`). 신호 대기는 운전 시간에 넣음. 시는 고유어(두 시간)·분은 숫자(5분)로 써서 TTS가 바르게 읽게.
+쉼 = 기어 P 또는 시동 끔 15분 이상(앱이 꺼져 있던 시간 포함, `state()`/`restore()`). 1.3.0: 앱이 꺼진 시간은 저장 때 세워져 있었거나(`parkedAtSave`) 60분 이상일 때만 쉼으로 셈 — 주행 중 앱이 죽었다 살아난 15분을 쉼으로 세지 않음. 쉬기 약속을 끄면(`enabled=false`) 말·판정 모두 하지 않음. 신호 대기는 운전 시간에 넣음. 시는 고유어(두 시간)·분은 숫자(5분)로 써서 TTS가 바르게 읽게.
 
 ## 6. 기록과 지표 — `ledger`
 
@@ -212,7 +219,7 @@ yielded(id): yields + 1, 다시 대기(다음엔 짧은 문장)
 
 ## 8. 시험 (`./gradlew :core:test`)
 
-스펙 82개(S01~S41 `Specs.kt`, S42~S56·S76 `EngineSpecs.kt`, S57~S75·S77~S82 `SessionSpecs.kt`) — 같은 목록을 JUnit 5(`CoreSpecsTest`, 동적 시험)와 의존성 없는 점검 러너가 돌립니다. S72는 `demo/trips/*.json`(시연 트립 4개, 앱 assets와 같은 파일)을 읽습니다.
+스펙 97개(S01~S41 `Specs.kt`, S42~S56·S76 `EngineSpecs.kt`, S57~S75·S77~S83 `SessionSpecs.kt`, S84~S97 `ReviewSpecs.kt` — 1.3.0 외부 검토 반영) — 같은 목록을 JUnit 5(`CoreSpecsTest`, 동적 시험)와 의존성 없는 점검 러너가 돌립니다. S72는 `demo/trips/*.json`(시연 트립 4개, 앱 assets와 같은 파일)을 읽습니다.
 
 | 묶음 | 스펙 |
 |---|---|
@@ -233,6 +240,8 @@ yielded(id): yields + 1, 다시 대기(다음엔 짧은 문장)
 | 음성 명령: 뜻 풀이(한·영 표·조사) · 질문 뒤 듣기(질문형 문장·듣기 요청 1회·응/아니·‘다시’ 뒤 한 번 더) · 버튼(상태·조용히·도움말) · 듣는 동안 말 보류 | S77~S80 |
 | 질문일 때만 듣기(‘곧 도착’ 문장 뒤엔 듣지 않음) · 주행 끝 순간 말하던 문장은 반복 예약 없음 · 요약까지 말해야 한가함(`pendingAfterEnd`) | S81 |
 | 리플레이 멈춤(듣는 동안 가상 시계 정지)·주행 끝 뒤 실시간 · 시연 트립 ‘두 시간 쉬기’를 STT 켜고 60배속으로: 질문 → 5초 멈춤 → ‘응’ → 대답 → 도착 → 요약 2줄 | S82 |
+| ‘약속 알려 줘’ 대답: 판단 전 약속은 ‘모두’에 넣지 않음 | S83 |
+| 1.3.0 검토 반영: 일몰 뒤 도착 후 밤 문장 없음(C01) · 일몰 문장(C02) · 신호 없음 UNKNOWN·위치 TTL·요약(C03) · 신호 대기 창과 방향지시등·급제동(C04) · 글자 수 길이(C05) · 다음 주행 준비(C06) · 조사 문법(C08) · 구역 GPS 흔들림 0/50·실제 접근 1(C09) · 상태 대답 꼬리(C10) · 경로 취소 뒤 값 비움(C11) · 쉬기 설정 90분 → 80/90(C12) · 넘김+쉼·복원 규칙(C13) · 감시 타이머 3번(C14) · 고속도로 갈림길 예고(ADV-01) | S84~S97 |
 
 ## 8.5 약속 엔진 (`engine` · `plan` · `scene`, 11/6 작업)
 
@@ -248,13 +257,13 @@ object PreTripPlanner { fun plan(Input(nowMs, originLat, originLon, plans, promi
 
 | 약속 | 상태 규칙 | 말(한 번, 상태가 바뀔 때) |
 |---|---|---|
-| 해 지기 전 귀가(margin 30) | 도착 예정 ≤ 일몰−30분 ON_TRACK · 넘으면 AT_RISK(되돌릴 땐 5분 여유) · 해 진 뒤 주행 MISSED · 해 지기 전 도착 KEPT | AT_RISK: “이대로면 오후 5시 28분 도착, 해는 오후 5시 22분에 져요. 쉬지 말고 바로 가요.”(UNTIL_DEADLINE=일몰, 지나면 밤 문장으로) · 해 진 뒤: “해가 졌어요. 약속보다 늦었지만, 전조등 켜고 천천히 가요.” |
-| 고속도로 대신 | 제한속도 ≥ 100 또는 도로 이름(고속도로·고속국도·Expressway)이면 MISSED(그 주행 내내) | “고속도로에 들어섰어요. 약속과 달라요. 다음 나들목에서 내려갈지 정해요.” |
-| 비 오는 날 | 와이퍼 60초 이상 → 비 · 비 중 제한속도의 80%(젖은 노면 20% 감속) 넘으면 AT_RISK · 와이퍼 5분 멈추면 끝 | 비 시작: “비가 와요. 약속대로 평소보다 천천히…” · 30초 넘게 빠르면: “빗길에 70예요. 48 아래로 줄여요.” |
+| 해 지기 전 귀가(margin 30) | 도착 예정 ≤ 일몰−30분 ON_TRACK · 넘으면 AT_RISK(되돌릴 땐 5분 여유) · 해 진 뒤 주행 MISSED · 해 지기 전 도착 KEPT | AT_RISK: “이대로면 5시 28분 도착, 해는 5시 22분에 져요.”(1.3.0: ‘쉬지 말고 바로 가요’ 삭제 — 쉬기 약속과 충돌 · 짧은 문장은 도착이 일몰 뒤일 때만 “해 진 뒤 도착이에요.”, 아니면 “해 지기 직전 도착이에요.”) (UNTIL_DEADLINE=일몰, 지나면 밤 문장 — 1.3.0: 도착 전일 때만) · 해 진 뒤: “해가 졌어요. 약속보다 늦었지만, 전조등 켜고 천천히 가요.” |
+| 고속도로 대신 | 제한속도 ≥ 100 또는 도로 이름(고속도로·고속국도·Expressway)이면 MISSED(그 주행 내내) · 도로 신호를 한 번도 못 받으면 UNKNOWN(1.3.0) | 들어서기 전(1.3.0, ADV-01): TBT가 EXIT·MERGE이고 150~1 500 m 앞, 방면(`toward`)에 IC·JC·고속도로·톨게이트·나들목이 있으면 방면마다 한 번 “앞 갈림길은 판교IC 방면이에요. 약속대로 일반도로로 가요.”(`highway.ahead`) · 들어서면: “고속도로에 들어섰어요. 약속과 달라요. 다음 나들목에서 내려갈지 정해요.” |
+| 비 오는 날 | 와이퍼 60초 이상 → 비 · 비 중 제한속도의 80%(젖은 노면 20% 감속) 넘으면 AT_RISK · 와이퍼 5분 멈추면 끝 · 와이퍼 신호를 한 번도 못 받으면 UNKNOWN(1.3.0) | 비 시작: “비가 와요. 약속대로 평소보다 천천히…” · 30초 넘게 빠르면: “빗길에 70예요. 48 아래로 줄여요.” |
 | 2시간 쉬기 | 운전 ≥ 110분 AT_RISK · ≥ 120분 MISSED(말은 RestTracker) | — |
-| 약속 구역(중심·반경) | 밖 MISSED(나갈 때는 경계, 돌아올 때는 경계 안쪽 100 m — 히스테리시스) · 경계 300 m 안쪽에서 바깥으로 움직이면 AT_RISK · 안 ON_TRACK | 예고(UNTIL_DEADLINE 60초): “약속 구역 끝이 가까워요…” · 밖: “약속 구역 밖이에요. 안전한 곳에서 돌아가요.” · 돌아오면(INFO): “약속 구역으로 돌아왔어요.” |
+| 약속 구역(중심·반경) | 밖 MISSED(나갈 때는 경계, 돌아올 때는 경계 안쪽 100 m — 히스테리시스) · 경계 300 m 안쪽에서 바깥으로 움직이면 AT_RISK(1.3.0: 움직이는 중 ∧ 3초 이상 기록 ∧ 10초 동안 15 m 넘게 멀어짐 — GPS 흔들림 오경보 방지) · 안 ON_TRACK · 위치가 5분 끊기면 UNKNOWN(1.3.0) | 예고(UNTIL_DEADLINE 60초): “약속 구역 끝이 가까워요…” · 밖: “약속 구역 밖이에요. 안전한 곳에서 돌아가요.” · 돌아오면(INFO): “약속 구역으로 돌아왔어요.” |
 
-EnginePolicy 기본값: rainOnMs 60 000 · rainOffMs 300 000 · rainSpeedFactor 0.8 · rainDefaultLimitKph 60 · rainFastHoldMs 30 000 · highwaySpeedLimitKph 100 · zoneEdgeM 300 · zoneBackM 100 · darkHysteresisMs 300 000 · zone Asia/Seoul. 약속 경고(PROMISE)는 `speakWhen = 주행 중`(세워 둔 동안 미룸) — ‘돌아왔어요’(INFO)는 세워 둔 동안에도 말함.
+EnginePolicy 기본값: rainOnMs 60 000 · rainOffMs 300 000 · rainSpeedFactor 0.8 · rainDefaultLimitKph 60 · rainFastHoldMs 30 000 · highwaySpeedLimitKph 100 · zoneEdgeM 300 · zoneBackM 100 · darkHysteresisMs 300 000 · zone Asia/Seoul · (1.3.0) fixTtlMs 300 000 · zoneEdgeWindowMs 10 000 · zoneEdgeMoveM 15 · highwayAhead true · highwayAheadMinM 150 · highwayAheadMaxM 1 500. 경로 취소(RouteError)·도착은 제한속도·도로 이름을 비움(다음 경로에 옛 값이 남지 않게, 1.3.0). 주행 끝 요약은 UNKNOWN 약속을 ‘지킴’에 넣지 않고 “…은 판단할 신호가 없었어요.”로 따로 말함(1.3.0). 약속 경고(PROMISE)는 `speakWhen = 주행 중`(세워 둔 동안 미룸) — ‘돌아왔어요’(INFO)는 세워 둔 동안에도 말함.
 
 PreTripPlanner 선택 규칙: 위반 0인 후보 중 가장 빠른 것 → 없으면 해 지기 전에 도착하는 것 → 없으면 가장 빠른 것. 문장: 선택 경로·소요 시간 / 해 지기 전(정상·직전·늦음 — 늦으면 출발 시한 또는 ‘다른 날·동승’) / 고속도로 유무 / 2시간 넘으면 쉬기 안내. 경로가 없으면 오류 문장.
 
@@ -363,6 +372,7 @@ class SpeechScheduler { var muteInfoUntilMs: Long }   // ‘조용히’ — INF
 | 음성 명령(11/6 Q040) | STT는 2차 계획 | **STT C안(A 버튼 + B 물을 때만 듣기) — `voice` 패키지·`VoicePhrases`·`TripSession.voiceInput/listening/takeListenRequest/onVoice`·`SpeechScheduler.muteInfoUntilMs`·Ledger `VoiceCommand`·RestTracker 질문형 문장(`ask`)·스펙 S77~S80 · 앱 1.2.0(versionCode 4)** | 사용자 결정(C안). 늘 듣지 않음(웨이크워드 없음)·닫힌 문법·모르면 행동하지 않음 — 잘못 알아듣고 행동하는 것보다 한 번 더 묻는 쪽이 안전. STT가 없으면 1.1.0과 같은 문장·동작 |
 | 근접 알림 비교(11/6) | 알림 순간에 비교 | **알림 3초 뒤 비교 + 시간 차 `lagMs`** | 1.1.0 실측: 근접 알림이 코어보다 47~88 ms 먼저 와서 0/2 ‘불일치’로 기록됨(판단은 같았음) |
 | 11/6 실행 보정(Q041) · 앱 1.2.1(versionCode 5) | 질문 판정 = 본 알림 첫 말 · 리플레이 시계 = 배속 고정 · 실차 복귀 = 끝 15초 뒤 · 끝난 뒤 반복 예약 · 경로 취소 = 실패 · 계획 오류 문장에 코드 | **질문 판정 = ‘?’로 끝난 문장(`Phrases.isQuestion`) · 리플레이 시계 = 듣는 동안 멈춤·끝난 뒤 실시간(`hold`·`realTimeAfterEnd`) · 실차 복귀 = 할 말이 끝난 뒤(`pendingAfterEnd`, 4~45초) · `tripEnded` 뒤 반복 없음 · 요청 뒤 3초 안 취소 = 앞 경로 바뀜(새 경로 15초 기다림) · 오류 코드는 말하지 않음 · 스펙 S81·S82 · 와이퍼 `WindowArea(FRONT_WINDSHIELD)`+`CAR_WINDOWS` · 시연 트립 rest_two_hours v0.2(ETA 15:18 · 2:13:20 도착)** | 11/6 에뮬레이터 실행(run_1106_094037): ‘곧 도착’ 문장 뒤 12초 듣는 사이 15초 복귀가 요약을 끊음(요약 0/2) · 60배속 요약 둘째 줄 소실(S82로 발견) · `onRouteCancelled` 139 ms 뒤 새 경로 5.8초 뒤 · `registerWiperState(WindowArea, …)` 영역 인자를 못 만듦. 음성 시험 실패는 앱이 아닌 실행 스크립트(adb가 반복문 입력을 먹어 0.19초만 주입) |
+| 11/7 외부 검토 반영(Q047·Q048) · 앱 1.3.0(versionCode 7) | 1.2.2 동작 | **일몰 문장 정정·도착 뒤 밤 문장 없음 · 신호 없음 = UNKNOWN(고속도로·비·구역 TTL 5분) · 신호 대기 창에서 방향지시등·급제동 제외 · 글자 수 말 길이·감시 타이머·실패 뒤 2초 · 조사 허용 문법(한국어 모드 = 한국어 표만) · 구역 예고 = 움직이며 10초 15 m · 경로 취소/도착 때 제한속도·도로 비움 · 쉬기: 넘김 따로 말함·복원은 저장 때 정차였거나 60분 이상·끄기 · 고속도로 갈림길 예고(TBT `toward`) · 약속 정하기 화면·설정 명령 · 시동 자동 시작(BootReceiver)·주행 끝 뒤 다음 실차 세션 · 서비스 DUMP 보호·DriveActivity 비공개 · 위치 로그 소수 3자리 · 스펙 S84~S97 → 97개** | codex 검토 17건 사실 확인(F07은 adb 명령을 지키려 DUMP 권한으로, F09는 Q027 정책 유지 + 넘김 따로 기록) · antigravity 검토 일부 반영(오류 6건 제외). 문법 C18(질문 맥락)은 G2 녹음 뒤 LOPO로 미룸 |
 | 11/6 두 번째 실행 보정(Q043) · 앱 1.2.2(versionCode 6) | ‘약속 알려 줘’ = 판단된 약속 수 + ‘모두’ · 와이퍼 등록 = 한 인자 꼴이 없으면 먼저 `vsdk_reg_missing` | **판단 전(UNKNOWN) 약속이 있으면 ‘모두’라 하지 않고 하나면 이름(“해 지기 전 귀가는 아직 몰라요”), 둘 이상이면 개수 · 위험과 섞이면 ‘나머지’ 대신 개수(`VoicePhrases.status`, 스펙 S83 → 83개) · `vsdk_reg_missing`은 모든 등록 꼴이 실패했을 때만** | run_1106_135232: 화면엔 약속 5개인데 대답이 “약속 4개 모두 지키는 중이에요.”(목적지가 없어 해 지기 전 귀가가 UNKNOWN) · 와이퍼가 WindowArea 꼴로 등록되고 첫 값도 받았는데 판정이 ‘실패’로 셈 |
 | 위치(11/5 Q039) | LocationManager(fused/gps) | **Pleos FusedLocation 1.1.3 주 · LocationManager 대체 · 약속 구역 근접 알림 이중 확인(기록만) · 경계 히스테리시스 `zoneBackM` 100 m(S76) · 앱 1.1.0(versionCode 3)** | 실제 위치를 Pleos SDK에서 받고(기술 활용), 플랫폼 근접 알림으로 구역 판정을 한 번 더 확인. 히스테리시스가 없으면 경계에 선 채 GPS가 ±30 m 흔들릴 때 ‘돌아왔어요/밖이에요’를 되풀이함(S76이 옛 코드에서 실패로 확인) |
 
@@ -371,6 +381,7 @@ class SpeechScheduler { var muteInfoUntilMs: Long }   // ‘조용히’ — INF
 | 날짜 | 할 일 |
 |---|---|
 | 11/6 | ~~PromiseEngine · SolarCalc · PreTripPlanner~~ → 11/4 밤 완료(스펙 S42~S56) |
-| 11/7 | ~~gate: QuietWindows 구현~~ → 11/5 완료(S57~S63) · ConflictForecaster(경로 앞 고속도로 진입 예고) · NaviHelper 경로 ‘검색만’ API 확인(옵션별 후보) |
+| 11/7 | ~~gate: QuietWindows 구현~~ → 11/5 완료(S57~S63) · ~~ConflictForecaster~~ → 11/8 갈림길 예고(S97) · NaviHelper 경로 ‘검색만’ API — 공개 API에 없음(옵션별 후보는 2차 이후) |
+| 11/8~ | 1.3.0 에뮬레이터 실행(GUARD·NEXT·SETTINGS·말 길이 실측) → 시연 영상 v0.4 · 11/10 G2 녹음(문법 1.3.0으로, 사전 등록에 문법 판 기록) → LOPO로 질문 맥락 문법(C18) |
 | 11/7~ | 음성 명령: 에뮬레이터 실측(STT 초기화·음성 파일 주입·질문 뒤 듣기) 뒤 문법·대기 시간 조정 · RECORD_AUDIO 필요 여부 확인 · 실차 마이크·소음에서 다시 |
 | 11/8 | ~~어댑터·상태 머신·배선~~ → 11/5 `:app`(platform 패키지·DrivePromiseService·MainActivity) 구현 — 11/5 10:48·10:56 에뮬레이터 빌드·스모크 통과(병원→집: dark.risk 0초 → 요약 50초, TTS onDone 2/2) · 11/5 v0.2: 차량 신호를 Vehicle SDK로, 제한속도 콜백, 어댑터 1회 초기화 · 11/5 v0.3(Q036): DO 인정 가정 + 주행 화면(DriveActivity)·화면 모드·‘다시 들려줘’ · 남은 것: 와이퍼·전조등 열거형 이름 실측 뒤 표 좁힘, TBT 도로 이름·주의 지점·도착 콜백 보정, 주행 화면이 에뮬레이터 기어 D에서 가려지는지(차단 감지) 실측 |

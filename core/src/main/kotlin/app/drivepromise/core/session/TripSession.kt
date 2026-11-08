@@ -86,6 +86,8 @@ class TripSession(
     val policy: SessionPolicy = SessionPolicy(),
     private val externalLedger: LedgerSink = LedgerSink { },
     private val listener: Listener = object : Listener {},
+    /** 1.3.0: 실제 시계(감시 타이머) — 리플레이는 [clock]이 가상 시계라 따로 줌. 기본은 같은 시계 */
+    private val realClock: Clock = clock,
 ) {
     enum class Phase { PARKED, DRIVING, ENDED }
 
@@ -97,6 +99,8 @@ class TripSession(
         fun onPlan(plan: PreTripPlanner.Plan, nowMs: Long) {}
         fun onSummary(summary: Summary) {}
         fun onEvent(e: LedgerEvent) {}
+        /** 1.3.0(C14): 감시 타이머가 완료 소식 없는 말을 멈춤 */
+        fun onWatchdog(key: String, nowMs: Long) {}
     }
 
     /** 주행 끝 요약 — 정차 화면·말·기록 */
@@ -123,8 +127,10 @@ class TripSession(
     val gate = QuietGate(policy.gate)
     val scheduler = SpeechScheduler(policy.quiet, gate, ledger)
     val arbiter = VoiceArbiter()
-    val voice = VoiceLoop(scheduler, arbiter, speaker, policy.usage)
-    val rest = RestTracker(policy.rest, scheduler, ledger)
+    val voice = VoiceLoop(scheduler, arbiter, speaker, policy.usage).also { v -> v.onWatchdog = { _, key -> listener.onWatchdog(key, clock.nowMs()) } }
+    /** 1.3.0(C12): 쉬기 간격은 켜 둔 ‘쉬기’ 약속(everyMin)에서 — 약속이 없으면 쉬기 말은 하지 않음(codex R05·R06) */
+    private val restPromise = promises.filterIsInstance<Promise.RestEvery>().firstOrNull()
+    val rest = RestTracker(restPolicyFor(policy.rest, restPromise), scheduler, ledger, enabled = restPromise != null)
     val engine = PromiseEngine(promises, scheduler, ledger, policy.engine)
 
     var phase = Phase.PARKED
@@ -230,7 +236,8 @@ class TripSession(
             engine.tick(w)
             checkPhase(now, v)
         }
-        val step = if (listening) voice.scheduler.tick(w, false) else voice.tick(w)   // 듣는 동안은 새 말을 시작하지 않음(정리만)
+        val real = realClock.nowMs()
+        val step = if (listening) voice.scheduler.tick(w, false, real) else voice.tick(w, real)   // 듣는 동안은 새 말을 시작하지 않음(정리만)
         if (step is Step.Speak) {
             lastSpoken = step; lastSpokenAtMs = now
             // 질문으로 말한 경우에만 듣기 차례를 엶 — ‘곧 도착이에요. 도착하면 꼭 쉬어요.’처럼 질문이 아닌 본 알림 뒤에는 듣지 않음(11/6 실행에서 발견, 1.2.1)
@@ -293,6 +300,7 @@ class TripSession(
         val lines = mutableListOf<String>()
         restLine?.let { lines += it }
         SummaryPhrases.kept(lang, promises, st)?.let { lines += it }
+        SummaryPhrases.unknownLine(lang, promises, st)?.let { lines += it }   // 1.3.0(C03): 판단 못 한 약속은 따로
         val digest = scheduler.digest
         val digestLines = digest.map { d -> runCatching { d.utterance.render(SayCtx(w, 0, true)) }.getOrDefault(d.key) }
         val s = Summary(tripStartMs, now, rest.drivingMs, st, lines, digestLines, digest, RestCompliance.compute(memory.events), reason)
@@ -417,10 +425,23 @@ class TripSession(
         get() = phase == Phase.ENDED && (scheduler.speakingKey != null || listening ||
             scheduler.pendingKeys.any { it.startsWith("summary.") || it.startsWith("voice.") || it == "repeat" || it == "plan" })
 
+    /**
+     * 1.3.0(C06): 주행이 끝났고 할 말(요약·대답)도 다 했는가 — 앱은 이때 실차 세션을 새로 만들어 다음 주행을 받음
+     * (첫 주행이 끝나면 다시 D로 가도 판정이 멈춰 있던 문제, codex R01)
+     */
+    val readyForNext: Boolean get() = phase == Phase.ENDED && !pendingAfterEnd
+
     fun restState(): RestTracker.State = rest.state()
     fun restoreRest(s: RestTracker.State) = rest.restore(s, clock.nowMs())
 
     companion object {
         private val PARKED_OR_UNKNOWN: (World) -> Boolean = { w -> w.vehicle?.driving != true }
+
+        /** 쉬기 약속의 간격으로 쉬기 정책을 만듦(예고는 기본 10분 전, 간격이 짧으면 간격의 ⅓) */
+        fun restPolicyFor(base: RestPolicy, p: Promise.RestEvery?): RestPolicy {
+            if (p == null || p.everyMin == base.targetMin) return base
+            val lead = minOf(base.leadMin, p.everyMin / 3).coerceAtLeast(base.headsUpCutoffMin + 1)
+            return base.copy(targetMin = p.everyMin, leadMin = lead)
+        }
     }
 }

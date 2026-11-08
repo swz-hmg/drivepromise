@@ -933,7 +933,8 @@
   {
    "t": 0,
    "gear": "D",
-   "speedKph": 0
+   "speedKph": 0,
+   "wiper": "OFF"
   },
   {
    "t": 10,

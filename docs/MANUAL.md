@@ -1,6 +1,6 @@
 # 운전약속(DrivePromise) 기동·재기동·운영 매뉴얼
 
-대상: 심사·시연·개발에서 Pleos Connect 에뮬레이터로 앱을 실행하는 사람. 버전 1.2.2(versionCode 6) 기준 — 위치는 Pleos FusedLocation SDK(안 되면 LocationManager 자동 전환), 음성 명령은 Pleos SpeechToText SDK(ON_DEVICE, 안 되면 버튼만).
+대상: 심사·시연·개발에서 Pleos Connect 에뮬레이터로 앱을 실행하는 사람. 버전 1.3.0(versionCode 7) 기준 — 위치는 Pleos FusedLocation SDK(안 되면 LocationManager 자동 전환), 음성 명령은 Pleos SpeechToText SDK(ON_DEVICE, 안 되면 버튼만).
 
 ## 0. 한눈에
 
@@ -13,9 +13,11 @@
 | 지금 상태 보기 | `--es cmd status` 후 `adb logcat -s DP` |
 | 위치·약속 구역 확인(geo fix) | 3-5 |
 | 음성 명령(말하기·질문 뒤 듣기) | 3-6 |
+| 약속 바꾸기(가족과 함께, 세워 둔 동안) | 정차 화면 ‘약속 정하기’ 또는 3-2 명령 |
+| 시동 때 자동 시작 · 다음 주행 | 3-8 |
 | 모두 지우고 처음부터 | `adb uninstall app.drivepromise` → 1장 |
 
-명령의 `SVC`는 `app.drivepromise/.DrivePromiseService` 입니다. 터미널에서 먼저 한 번 입력해 두세요.
+명령의 `SVC`는 `app.drivepromise/.DrivePromiseService` 입니다. 터미널에서 먼저 한 번 입력해 두세요. 1.3.0부터 이 서비스는 `android.permission.DUMP`로 보호되어 adb 셸(그 권한을 가짐)과 앱 자신만 부를 수 있습니다 — 아래 명령은 그대로 동작하고, 다른 설치 앱은 부를 수 없습니다.
 
 ```bash
 SVC=app.drivepromise/.DrivePromiseService
@@ -59,6 +61,7 @@ adb shell am start -n app.drivepromise/.MainActivity
 | 약속 타일 5개 | 초록(지키는 중) 또는 회색(모름 — 신호가 아직 없음) |
 | 음성으로 말하기 칸 | ‘다시 · 약속 알려 줘 · 조용히 해 — 쉬기 질문엔 응이나 아니’ + 🎤 말하기 · 질문 뒤 듣기: 켬 (음성 인식이 안 되면 ‘말하기 없음’·‘다시 시도’) |
 | 버튼 줄 | 경로 계획 · 주행 끝 · 한/영 · 실차 모드로 / 주행 중 화면 · DO 인정 가정 · 주행 화면 미리보기 / ▶ 시연 주행 4개 · ■ 리플레이 멈춤 |
+| 약속 정하기(1.3.0) | 약속 5개 켬/끔 · 쉬기 간격 · 해 지기 전 여유 · 구역 반경 · 지금 위치를 구역 중심으로 · 시동 때 자동 시작 (세워 둔 동안 가족과 함께 — 3-2) |
 
 음성이 준비됐는지:
 
@@ -101,10 +104,10 @@ adb forward tcp:8088 tcp:8088 && open http://127.0.0.1:8088/
 
 | 트립 | 명령 | 길이 | 기대 발화(순서) | 끝 요약 |
 |---|---|---|---|---|
-| hospital_home | `--es cmd replay --es name hospital_home` | 약 50초 | 해 지기 전 도착 위험 | 약속 결과 + 수고 인사 |
+| hospital_home | `--es cmd replay --es name hospital_home` | 약 50초 | 해 지기 전 도착 위험(“이대로면 5시 28분 도착, 해는 5시 22분에 져요.”) | 약속 결과 + 수고 인사 |
 | rest_two_hours | `... --es name rest_two_hours` | 약 2분 15초 | 두 시간 예고 → “두 시간째예요. 쉬어 갈까요?”(음성 인식이 되면 질문 + 5초 듣기, 듣는 동안 재생 멈춤) → 2시간 13분 도착 | 2시간마다 쉬기 놓침(요약 두 줄) |
 | zone_edge | `... --es name zone_edge` | 약 1분 40초 | 구역 끝 → 구역 밖 → 돌아옴 | 약속 구역 놓침 |
-| highway_rain | `... --es name highway_rain` | 약 2분 20초 | 고속도로 진입 → 비 시작 → 빗길 과속 | 고속도로·비 놓침 |
+| highway_rain | `... --es name highway_rain` | 약 2분 20초 | 갈림길 예고(“앞 갈림길은 판교IC 방면이에요. 약속대로 일반도로로 가요.”, 1.3.0) → 고속도로 진입 → 비 시작 → 빗길 과속 | 고속도로·비 놓침 |
 
 주행이 시작되면 주행 화면이 뜹니다(정차 화면이 앞에 있을 때). 주행 화면은 모드가 바뀌면(세움·음성만) 스스로 닫힙니다.
 
@@ -120,6 +123,14 @@ adb forward tcp:8088 tcp:8088 && open http://127.0.0.1:8088/
 | 다시 들려줘 | 주행 화면 버튼 | `--es cmd repeat` | — |
 | 말하기(6초 듣기) | 정차·주행 화면 🎤 말하기 | `--es cmd listen` | — |
 | 질문 뒤 듣기 | 질문 뒤 듣기: 켬/끔 | `--es cmd voice --es value off` (또는 `on`) | 켬 |
+| 약속 켜기·끄기(1.3.0) | 약속 정하기: 약속마다 켬/끔 | `--es cmd promise --es id rest --es value off` (`id`: dark·highway·rain·rest·zone) | 모두 켬 |
+| 쉬기 간격(1.3.0) | 약속 정하기: 1시간 · 90분 · 2시간 | `--es cmd rest_every --es value 90` | 120분 |
+| 해 지기 전 여유(1.3.0) | 약속 정하기: 15·30·45·60분 | `--es cmd dark_margin --es value 45` | 30분 |
+| 약속 구역 반경(1.3.0) | 약속 정하기: 3·5·10·20 km | `--es cmd zone_radius --es value 5000`(m) | 10 km |
+| 약속 구역 중심(1.3.0) | 약속 정하기: 지금 위치를 구역 중심으로 | `--es cmd zone_here` | 서울시청 |
+| 시동 때 자동 시작(1.3.0) | 약속 정하기: 켬/끔 | `--es cmd autostart --es value off` (또는 `on`) | 켬 |
+
+약속 설정은 세워 둔 동안(정차·주행 끝) 바꾸는 것을 전제로 합니다. 바꾸면 기록 `settings …`가 남고, 실차 세션이 정차·끝 상태면 새 설정으로 세션을 다시 시작합니다(주행 중이면 다음 주행부터). 쉬기 간격을 줄이면 예고 시점도 함께 당겨집니다(간격 90분 → 80분에 예고).
 
 ‘DO 인정 가정: 끔’이면 플랫폼이 이 앱의 주행 화면을 인정한다고 확인될 때만 주행 화면을 띄우고, 아니면 음성만 씁니다.
 
@@ -146,9 +157,9 @@ adb forward tcp:8088 tcp:8088 && open http://127.0.0.1:8088/
 |---|---|
 | 주 원천 | Pleos FusedLocation SDK 1.1.3 — `isSupported()` → 권한 `pleos.car.permission.FUSED_LOCATION` → `initialize()` → 위치 콜백 등록 + 마지막 위치 |
 | 대체 | 지원 안 함 · 권한 없음 · 등록 오류 · 15초 동안 좌표 없음 · 10초 넘게 끊김 → Android LocationManager(1초). 둘 다 돌 때는 3초 안의 Pleos 좌표를 먼저 씀 |
-| 약속 구역 판정 | 코어가 거리(하버사인)로 — 구역 끝 300 m 안에서 멀어지면 ‘위험’, 밖이면 ‘못 지킴’, 돌아오면 ‘지키는 중’ |
+| 약속 구역 판정 | 코어가 거리(하버사인)로 — 구역 끝 300 m 안에서 **움직이며 10초 동안 15 m 넘게** 멀어지면 ‘위험’(1.3.0: 세워 둔 차의 GPS 흔들림은 예고하지 않음), 밖이면 ‘못 지킴’, 돌아오면 ‘지키는 중’ · 위치가 5분 넘게 끊기면 ‘판단할 신호 없음’(1.3.0) |
 | 이중 확인 | 같은 구역에 Pleos 근접 알림(ENTER/EXIT)을 걸어 기록·부제 표시(`구역 밖(Pleos 확인)`)에 씀. 알림 3초 뒤 두 판단이 같은지 `zone_xcheck agree=`로, 코어가 바뀐 시각과의 차이를 `lagMs=`(양수 = 코어가 늦음)로 남김(코어 결정은 바꾸지 않음) |
-| 기록 | `location`(등록·대체) · `loc_src`(원천 바뀜) · `loc_fix`(좌표, 소수 4자리) · `geofence`(add·registered·transition·removed) · `zone_xcheck` |
+| 기록 | `location`(등록·대체) · `loc_src`(원천 바뀜) · `loc_fix`(좌표, 소수 3자리 ≈ 100 m — 1.3.0에서 4자리→3자리, 정확도 `r4`는 뺌) · `geofence`(add·registered·transition·removed) · `zone_xcheck` |
 
 세워 둔 채 시험(기본 구역: 서울시청 반경 10 km, 경도가 먼저). 한 줄씩 10초 간격으로 넣습니다.
 
@@ -165,8 +176,8 @@ adb logcat -d -s DP | grep -E "loc_fix|geofence|zone_xcheck|status"
 | 위치 | 약속 구역 타일 | 기대 기록 |
 |---|---|---|
 | 중심(세션 새로 시작) | 지키는 중 | `location … s=registered` · `geofence s=add` · `geofence s=registered` |
-| 9.0 km | 지키는 중 | `loc_fix src=pleos lat=37.6474` |
-| 9.85 km | 위험 | `status … zone:AT_RISK` |
+| 9.0 km | 지키는 중 | `loc_fix src=pleos lat=37.647` |
+| 9.85 km | 지키는 중(1.3.0 — 세워 둔 시험이라 ‘바깥으로 가는 중’이 아님) | `status … zone:ON_TRACK` |
 | 10.5 km | 못 지킴 | `zone:MISSED` · `geofence … tr=EXIT` · `zone_xcheck … agree=true` |
 | 8.0 km | 지키는 중 | `zone:ON_TRACK` · `tr=ENTER` · 말 “약속 구역으로 돌아왔어요.” |
 
@@ -179,6 +190,7 @@ adb logcat -d -s DP | grep -E "loc_fix|geofence|zone_xcheck|status"
 | 듣는 때 | ① **🎤 말하기**를 누를 때(최대 6초) ② 앱이 두 시간 쉬기 질문(“두 시간째예요. 쉬어 갈까요?”)을 끝낸 직후 5초. 늘 듣지 않음 |
 | 듣기 전후 | 짧은 ‘띵’ 뒤에 마이크를 엶 · 우리 말·내비 안내가 나오는 중이면 끝나기를 기다림 · 듣는 동안 앱은 새 말을 시작하지 않음 · 내비 안내가 시작되면 듣기를 멈춤 · 듣는 중에 다시 누르면 그만 |
 | 알아듣는 말 | 다시 들려줘 · 약속 알려 줘 · 조용히 해(10분 동안 안내성 말만 미룸) · (쉬기 질문에) 응/아니 — 그 밖의 말은 “잘 못 들었어요” 후 아무것도 안 함 · 질문 뒤 아무 말이 없으면 아무것도 안 함 |
+| 조사(1.3.0) | ‘약속을 알려 줘’ · ‘약속은 잘 지키고 있어?’ · ‘약속 좀 알려 줘’처럼 조사가 붙어도 상태 질문으로 알아들음. 한국어 모드는 한국어 표만(영어 표를 섞지 않음 — 잘못 알아듣고 행동하는 일을 줄임) |
 | ‘약속 알려 줘’ 대답(1.2.2) | 위험한 약속만 이름으로 · 아직 판단할 수 없는 약속(목적지가 없을 때의 해 지기 전 귀가 등)은 ‘모두’에 넣지 않고 따로: “약속 4개는 지키는 중이에요. 해 지기 전 귀가는 아직 몰라요.” |
 | 인식기 | Pleos SpeechToText 3.3.1 ON_DEVICE(오프라인) · 언어는 앱 언어(ko-KR / en-US) · 실패하면 앱은 버튼·질문 없는 문장으로 동작 |
 | 기록 | `stt_init`(준비) · `stt_wait`(말이 끝나기를 기다림) · `stt_listen`(듣기 시작) · `stt_result`(인식 끝 — release 빌드는 들은 글자 대신 글자 수) · `voice_cmd`(뜻) · 기기 안 기록(Ledger)에는 뜻(`VoiceCommand`)만 |
@@ -213,10 +225,20 @@ adb shell am start-foreground-service -n $SVC --es cmd stt_text --es text "'다�
 | 실시간 기록(event=… 키=값) | `adb logcat -s DP` |
 | 상태 한 줄(event=status_now, 위치 원천 `loc=` 포함) | `adb shell am start-foreground-service -n $SVC --es cmd status` |
 | 말한 문장·요약·화면 모드만 | `adb logcat -d -s DP \| grep -E "event=(speak\|summary\|mode)"` |
+| 말 길이 실측(1.3.0) | `adb logcat -d -s DP \| grep -E "event=(dur\|tts_watchdog)"` — `dur … est= ms= over=`: 예상 길이(글자 수 × 0.165초 + 0.3초)와 실제 길이 · `tts_watchdog`: 재생 끝 알림이 오지 않아 말을 끊고 다시 시도(예상 길이 × 2.5, 최소 15초) |
 
 주행 기록은 앱 내부 저장소 `files/ledger/YYYY-MM.jsonl`에 남고 밖으로 보내지 않습니다. 좌표는 기록 파일에 저장하지 않습니다.
 
-### 3-8. 데이터 지우기
+### 3-8. 시동 때 자동 시작과 다음 주행(1.3.0)
+
+| 항목 | 내용 |
+|---|---|
+| 시동 때 자동 시작 | 설치 뒤 앱을 한 번 열면, 인포테인먼트가 켜질 때(`BOOT_COMPLETED`) 서비스가 스스로 시작(기록 `boot autoStart=true` · `svc … src=boot`). ‘약속 정하기’ 또는 `--es cmd autostart --es value off`로 끔 |
+| 다음 주행 | 실차 주행이 끝나면 요약을 다 말한 뒤(최소 3초 · 최대 45초) 새 실차 세션을 엶(기록 `renew why=idle\|timeout waitedMs=`). 주행마다 앱을 다시 켤 필요 없음 |
+| 확인 | `adb shell am start-foreground-service -n $SVC --es cmd end` → `adb logcat -d -s DP \| grep -E "event=(renew\|summary)"` |
+| 재부팅 확인 | `adb reboot` → 부팅 뒤 `adb logcat -d -s DP \| grep -E "boot\|src=boot"` (Pleos 에뮬레이터는 다시 Cold Boot를 권장 — 차량 신호) |
+
+### 3-9. 데이터 지우기
 
 | 하는 일 | 명령 |
 |---|---|
@@ -240,4 +262,7 @@ adb shell am start-foreground-service -n $SVC --es cmd stt_text --es text "'다�
 | 말해도 ‘잘 못 들었어요’ | `grep stt_result` 의 `why=`·`rms=` | `timeout_empty`·`rms=0.0` → 에뮬레이터 마이크가 꺼짐(3-6의 Extended Controls 또는 `adb emu avd hostmicon`) · 글자는 왔는데 뜻이 UNKNOWN → 알아듣는 말(3-6) 중 하나로 |
 | 음성 파일 주입이 ‘들림 없음’ | `grep "stt_feed s=send"` 의 `bytes=` | 만든 PCM보다 작으면 조각이 덜 감(셸 반복문의 `adb shell`에 `< /dev/null`) · 같은데도 글자가 없으면 인식기(ON_DEVICE 엔진) 문제 — `stt_error` 확인 |
 | 리플레이가 끝났는데 요약이 안 들림 | `grep -E "summary|replay_back"` | 1.2.1부터 요약을 다 말한 뒤 실차로 돌아감(`replay_back why=idle`) — `why=timeout`이면 말이 45초 넘게 밀린 것(내비 안내가 길게 이어짐) |
+| 말이 중간에 끊기고 다시 나옴 | `grep -E "tts_watchdog\|event=dur"` | 재생 끝 알림이 오지 않아 감시 타이머가 끊은 것(1.3.0). 세 번 실패하면 그 문장은 버림 — TTS 엔진·오디오 확인 |
+| 주행이 끝났는데 다음 주행이 안 잡힘 | `grep event=renew` | 없으면 요약이 아직 남음(최대 45초) · 앱 강제 종료 뒤면 정차 화면을 한 번 열기 |
+| 재부팅 뒤 앱이 안 뜸 | `grep -E "boot"` | 설치 뒤 한 번도 앱을 안 열었으면 안드로이드가 부팅 알림을 보내지 않음(정상) · ‘시동 때 자동 시작: 끔’인지 확인 |
 | 질문 뒤에 듣지 않음 | 정차 화면 ‘질문 뒤 듣기’ · `grep -E "stt_wait\|stt_listen"` | ‘끔’이면 켬 · `why=busy` → 내비 안내가 길게 이어짐(다음 질문에서 다시) |

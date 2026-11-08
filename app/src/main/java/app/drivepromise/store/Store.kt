@@ -62,6 +62,23 @@ class Prefs(ctx: Context) {
         get() = sp.getBoolean("voice.afterQuestion", true)
         set(v) { sp.edit().putBoolean("voice.afterQuestion", v).apply() }
 
+    /** 1.3.0(PT 과제): 시동(부팅) 때 자동 시작 — 기본 켬 */
+    var autoStart: Boolean
+        get() = sp.getBoolean("autoStart", true)
+        set(v) { sp.edit().putBoolean("autoStart", v).apply() }
+
+    /** 1.3.0 약속 값(정차 화면 ‘약속 정하기’) */
+    var restEveryMin: Int
+        get() = sp.getInt("rest.everyMin", 120)
+        set(v) { sp.edit().putInt("rest.everyMin", v).apply() }
+    var darkMarginMin: Int
+        get() = sp.getInt("dark.marginMin", 30)
+        set(v) { sp.edit().putInt("dark.marginMin", v).apply() }
+    var zoneRadiusM: Int
+        get() = sp.getInt("zone.radiusM", 10_000)
+        set(v) { sp.edit().putInt("zone.radiusM", v).apply() }
+    fun promiseOn(id: String): Boolean = id in (sp.getStringSet("promises.on", null) ?: PROMISE_IDS.toSet())
+
     fun restState(): RestTracker.State? {
         if (!sp.contains("rest.drivingMs")) return null
         return RestTracker.State(
@@ -69,6 +86,7 @@ class Prefs(ctx: Context) {
             lastDrivingAtMs = sp.getLong("rest.lastDrivingAtMs", -1).takeIf { it >= 0 },
             headsUpDone = sp.getBoolean("rest.headsUpDone", false),
             mainDone = sp.getBoolean("rest.mainDone", false),
+            parkedAtSave = sp.getBoolean("rest.parkedAtSave", false),   // 1.3.0(R08): 저장 때 세워져 있었는가
         )
     }
 
@@ -78,12 +96,13 @@ class Prefs(ctx: Context) {
             .putLong("rest.lastDrivingAtMs", s.lastDrivingAtMs ?: -1)
             .putBoolean("rest.headsUpDone", s.headsUpDone)
             .putBoolean("rest.mainDone", s.mainDone)
+            .putBoolean("rest.parkedAtSave", s.parkedAtSave)
             .apply()
     }
 
     /** 약속 설정 — 켠 약속 id 집합 + 구역 중심·반경 + 어두워지기 전 여유 */
     fun promises(): List<Promise> {
-        val on = sp.getStringSet("promises.on", null) ?: setOf("dark", "highway", "rain", "rest", "zone")
+        val on = sp.getStringSet("promises.on", null) ?: PROMISE_IDS.toSet()
         val list = mutableListOf<Promise>()
         if ("dark" in on) list += Promise.HomeBeforeDark(sp.getInt("dark.marginMin", 30))
         if ("highway" in on) list += Promise.AvoidHighway()
@@ -98,12 +117,16 @@ class Prefs(ctx: Context) {
     }
 
     fun setPromiseOn(id: String, on: Boolean) {
-        val cur = (sp.getStringSet("promises.on", null) ?: setOf("dark", "highway", "rain", "rest", "zone")).toMutableSet()
+        val cur = (sp.getStringSet("promises.on", null) ?: PROMISE_IDS.toSet()).toMutableSet()
         if (on) cur += id else cur -= id
         sp.edit().putStringSet("promises.on", cur).apply()
     }
 
     fun setZone(lat: Double, lon: Double, radiusM: Int) {
         sp.edit().putLong("zone.lat", java.lang.Double.doubleToLongBits(lat)).putLong("zone.lon", java.lang.Double.doubleToLongBits(lon)).putInt("zone.radiusM", radiusM).apply()
+    }
+
+    companion object {
+        val PROMISE_IDS = listOf("dark", "highway", "rain", "rest", "zone")
     }
 }
