@@ -9,11 +9,15 @@ package app.drivepromise.core.speech
  * 말하는 중 내비가 시작되면 [Action.Yield] — 250 ms 안에 멈춤(실측 겹침 217 ms, 목표 ≤ 300 ms).
  * 다시 말하기: 내비 재생기가 모두 끝나고 1.5초 + 포커스 GAIN(오지 않으면 3초 더).
  * 내비 안내 한 번 = 재생기 2개(효과음 ≈1.05초, 말 ≈2.1초 +99 ms) — 첫 재생기만 보면 말 중간에 다시 시작합니다(v0.6 결함).
+ * 1.3.0b(11/8 실행 run_1108_212028): 포커스 GAIN 뒤에도 내비 재생기 하나가 목록에 26초 남아(재생은 끝남) 계획 문장이 다시 나가지 못함
+ *   → GAIN이 마지막 ‘재생기 늘어남’보다 뒤이고, 그 뒤 [staleAfterGainMs] 동안 목록이 그대로면 남은 재생기는 끝난 것으로 봄.
+ *     내비가 다시 말하면 재생기가 늘거나 포커스를 다시 가져가므로 그때 다시 물러섭니다.
  */
 class VoiceArbiter(
     val gapMs: Long = 1_500,
     val gainWaitMs: Long = 3_000,
     val stopBudgetMs: Long = 250,
+    val staleAfterGainMs: Long = 4_000,
 ) {
     enum class Focus { GAIN, LOSS_TRANSIENT, LOSS_TRANSIENT_CAN_DUCK, LOSS }
 
@@ -29,6 +33,13 @@ class VoiceArbiter(
     private var focusLostAt: Long? = null
     private var regainAt: Long? = null
     private var speakingId: Long? = null
+    private var navIncreasedAt: Long? = null
+    private var navChangedAt: Long? = null
+
+    /** 1.3.0b: GAIN 뒤 그대로 남은 내비 재생기를 끝난 것으로 본 횟수(기록용) */
+    var staleCount = 0
+        private set
+    private var staleNoted = false
 
     val navActive: Boolean get() = navPlayers > 0
 
@@ -36,6 +47,8 @@ class VoiceArbiter(
     fun onNavPlayers(nowMs: Long, active: Int): Action {
         val was = navPlayers
         navPlayers = active.coerceAtLeast(0)
+        if (navPlayers != was) navChangedAt = nowMs
+        if (navPlayers > was) { navIncreasedAt = nowMs; staleNoted = false }
         if (navPlayers > 0) {
             navEndedAt = null
             return yieldIfSpeaking("play")
@@ -57,7 +70,11 @@ class VoiceArbiter(
 
     /** 지금 새로 말을 시작해도 되는가 */
     fun canStart(nowMs: Long): Boolean {
-        if (navPlayers > 0) return false
+        if (navPlayers > 0) {
+            if (!staleAfterGain(nowMs)) return false
+            if (!staleNoted) { staleNoted = true; staleCount++ }
+            return true
+        }
         val end = navEndedAt
         val lost = focusLostAt
         if (lost != null) {   // GAIN 전: 내비가 보였으면 내비 끝, 아니면 잃은 시각부터 1.5초 + 3초
@@ -68,6 +85,16 @@ class VoiceArbiter(
         val re = regainAt   // 재생 목록에 내비가 안 보인 경우: GAIN 뒤 1.5초
         if (re != null && (end == null || re > end + gapMs) && nowMs < re + gapMs) return false
         return true
+    }
+
+    /** GAIN이 마지막 재생기 늘어남보다 뒤이고, GAIN·마지막 변화 뒤 [staleAfterGainMs] 동안 목록이 그대로 */
+    private fun staleAfterGain(nowMs: Long): Boolean {
+        val re = regainAt ?: return false
+        if (focusLostAt != null) return false
+        val inc = navIncreasedAt ?: return false
+        if (inc > re) return false
+        val ref = maxOf(re, navChangedAt ?: re)
+        return nowMs >= ref + staleAfterGainMs
     }
 
     fun started(id: Long) {

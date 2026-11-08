@@ -27,6 +27,7 @@ import app.drivepromise.core.speech.SpeechScheduler
 import app.drivepromise.core.speech.Step
 import app.drivepromise.core.speech.Utterance
 import app.drivepromise.core.speech.Validity
+import app.drivepromise.core.speech.VoiceArbiter
 import app.drivepromise.core.speech.World
 import app.drivepromise.core.voice.VoiceCommands
 import app.drivepromise.core.voice.VoiceIntent
@@ -55,6 +56,7 @@ object ReviewSpecs {
         "S96 다음 주행 — 끝난 뒤 할 말을 다 하면 readyForNext(앱이 새 세션)(C06·R01)" to ::s96,
         "S97 고속도로 갈림길 예고 — 진출입 TBT의 방면이 IC·JC면 들어서기 전 한 번, 일반 회전·이미 고속도로·같은 방면은 없음(ADV-01)" to ::s97,
         "S98 세워 둔 차(P)에는 회전 예측 없음 — 내비 안내에 끊긴 출발 전 계획 문장을 다시 말함, 신호 대기(D)는 그대로 조심(11/8 실행 run_1108_183038에서 발견)" to ::s98,
+        "S99 내비 재생기가 GAIN 뒤에도 목록에 남으면(재생은 끝남) 4초 뒤 끝난 것으로 봄 — 새 재생기·포커스 잃음엔 다시 물러섬(11/8 실행 run_1108_212028)" to ::s99,
     )
 }
 
@@ -404,4 +406,43 @@ private fun s98() {
         t += 100
     }
     ok(again != null && again.key == "plan", "물러선 계획 문장을 P에서 다시 말함(1.3.0은 20초 안에 못 함): ${again?.key}@$t")
+}
+
+// ---------------------------------------------------------------- 1.3.0b — 11/8 두 번째 실행(run_1108_212028)에서 발견
+private fun s99() {
+    // 실측 순서(ms, 계획 문장 시작 = 0): 포커스 잃음 0 → 내비 재생기 1(110) → 2(294) → 1(2 643) → GAIN(2 646) → 26초 동안 1개가 그대로
+    val a = VoiceArbiter()
+    a.started(2)
+    ok(a.onFocus(0, VoiceArbiter.Focus.LOSS_TRANSIENT) is VoiceArbiter.Action.Yield, "포커스 잃음에 물러섬")
+    a.onNavPlayers(110, 1); a.onNavPlayers(294, 2); a.onNavPlayers(2_643, 1)
+    a.onFocus(2_646, VoiceArbiter.Focus.GAIN)
+    ok(!a.canStart(6_645), "GAIN 뒤 4초 전에는 아직(남은 재생기가 진짜 말일 수 있음)")
+    ok(a.canStart(6_646), "GAIN 뒤 4초 동안 목록이 그대로면 남은 재생기는 끝난 것으로 봄")
+    eq(a.staleCount, 1, "기록용 횟수")
+    a.started(3)
+    val y = a.onNavPlayers(9_000, 2)
+    ok(y is VoiceArbiter.Action.Yield && !a.canStart(9_100), "그 뒤 내비 재생기가 늘면 다시 물러서고 시작 금지: $y")
+    // GAIN 뒤에 재생기가 늘었으면(포커스 없이 말하는 경우) 남은 것으로 보지 않음
+    val b = VoiceArbiter()
+    b.onFocus(0, VoiceArbiter.Focus.LOSS_TRANSIENT); b.onFocus(1_000, VoiceArbiter.Focus.GAIN)
+    b.onNavPlayers(1_500, 1)
+    ok(!b.canStart(30_000), "GAIN 뒤에 나타난 재생기는 끝날 때까지 기다림")
+    // GAIN이 없으면(포커스를 잃은 채) 남은 재생기를 끝난 것으로 보지 않음
+    val c = VoiceArbiter()
+    c.onFocus(0, VoiceArbiter.Focus.LOSS_TRANSIENT); c.onNavPlayers(100, 1)
+    ok(!c.canStart(60_000), "GAIN 없고 재생기 남음 — 시작 금지")
+    // 끝에서 끝까지(세워 둔 차 · 경로 첫 회전 80 m · 실측 내비 순서): 계획 문장이 물러선 뒤 짧게 다시 나감
+    val parked = VehicleSnapshot(0, gear = Gear.P, speedMps = 0f)
+    val gate = QuietGate()
+    gate.update(0, parked)
+    val sim = Sim(SpeechScheduler(QuietPolicy(), gate))
+    val plan = "추천 경로로 가요. 11분 걸려요. 지금 가도 오후 9시 32분 도착, 해 진 뒤예요(일몰 오후 5시 27분). 해 지기 전 도착은 어려워요 — 다른 날이나 동승을 생각해요. 고속도로가 있는지는 알 수 없어요."
+    sim.sch.submit(Utterance("plan", Priority.INFO, 4_000, render = { plan }), 0)
+    sim.focus(50, VoiceArbiter.Focus.LOSS_TRANSIENT)
+    sim.nav(110, 1); sim.nav(294, 2)
+    sim.at(400) { t -> gate.onNavi(NaviEvent.Tbt(t, 80, TurnType.LEFT)) }
+    sim.nav(2_643, 1); sim.focus(2_646, VoiceArbiter.Focus.GAIN)
+    sim.run(0, 15_000) { t -> World(t, parked.copy(tMillis = t)) }
+    eq(sim.log.map { Triple(it.key, it.attempt, it.short) }, listOf(Triple("plan", 1, false), Triple("plan", 2, true)), "계획 문장: 물러섬 → 짧게 다시")
+    ok(sim.log[1].t in 6_646L..7_000L, "다시 말한 시각 ${sim.log[1].t} ms(GAIN 뒤 4초)")
 }

@@ -150,7 +150,7 @@ adb logcat -d -s DP | grep -E "stt_init|stt_listen|stt_result|voice_cmd"
 
 | 하는 일 | 명령 |
 |---|---|
-| 판단 코어 스펙 98개(JDK 17만 있으면 됨) | `./gradlew :core:test` |
+| 판단 코어 스펙 99개(JDK 17만 있으면 됨) | `./gradlew :core:test` |
 | 디버그 APK | `./gradlew :app:assembleDebug` |
 | release APK(`~/.drivepromise/signing.properties`가 있으면 그 키로 서명) | `./gradlew :app:assembleRelease` |
 
@@ -169,7 +169,7 @@ adb logcat -d -s DP | grep -E "stt_init|stt_listen|stt_result|voice_cmd"
 | 소리 | 에뮬레이터 오디오 출력 켜기(Mac 스피커). 앱은 내비 안내 용도(NAVIGATION_GUIDANCE)로 말함 |
 | 네트워크 | 약속 판단·일몰 계산·음성 합성·음성 인식(둘 다 ON_DEVICE)은 오프라인 동작. 출발 전 계획·ETA는 내비 경로(NaviHelper)를 씀 — 경로가 없으면 해당 판단만 ‘판단 못 함’ |
 | 주행 중 화면 | 주행 화면은 `distractionOptimized=true`로 선언되어 있고, Pleos 마켓 심사로 DO가 인정된다는 **가정**(설정 ‘DO 인정 가정: 켬’)으로 띄웁니다. 사이드로드 설치에서 플랫폼이 가리면 앱이 감지해 음성만으로 내려갑니다 |
-| 시험한 범위 | 에뮬레이터 리플레이 4종(발화 열·요약·물러서기·주행 화면) · 코어 스펙 98개 · Virtual Console 신호(기어·속도·방향지시등) · 위치: geo fix로 약속 구역 경계 넘기(Pleos 좌표 수신·코어 판정·근접 알림 — 2-3) · 음성 명령: 뜻 풀이·질문·조용히·듣는 동안 말 보류·질문일 때만 듣기·리플레이 멈춤(스펙 S77~S82)과 에뮬레이터 시험(2-4) |
+| 시험한 범위 | 에뮬레이터 리플레이 4종(발화 열·요약·물러서기·주행 화면) · 코어 스펙 99개 · Virtual Console 신호(기어·속도·방향지시등) · 위치: geo fix로 약속 구역 경계 넘기(Pleos 좌표 수신·코어 판정·근접 알림 — 2-3) · 음성 명령: 뜻 풀이·질문·조용히·듣는 동안 말 보류·질문일 때만 듣기·리플레이 멈춤(스펙 S77~S82)과 에뮬레이터 시험(2-4) |
 
 **알려진 제한(1차 제출 기준)** — 실차 시험 전입니다. 기본 약속은 5개(쉬기 2시간 · 해 지기 30분 전 · 약속 구역 서울시청 반경 10 km)이고 정차 화면 ‘약속 정하기’에서 바꿉니다. 출발 전 계획은 내비가 주는 추천 경로 1개의 도착 시각으로 일몰 여유를 판단하며(목적지는 시연용 판교역 버튼), 에뮬레이터 경로에는 도로 종류가 없어 ‘고속도로가 있는지는 알 수 없어요’라고 말합니다. 시동 자동 시작은 설치 뒤 한 번 앱을 연 다음부터 동작합니다. 에뮬레이터 VHAL에는 기어·속도만 있어 방향지시등·와이퍼·전조등은 Pleos Vehicle SDK로 받습니다. 위치는 Pleos FusedLocation SDK 1.1.3(위치 업데이트 + 약속 구역 근접 알림)을 쓰고, 지원하지 않거나 권한이 없거나 15초 동안 좌표가 없으면 Android LocationManager로 자동 전환합니다. 음성 명령은 Pleos SpeechToText 3.3.1(ON_DEVICE)로 다섯 가지 말만 알아듣는 닫힌 문법이며, 음성 인식을 쓸 수 없으면 버튼과 질문 없는 문장으로 동작합니다. 마이크 권한(RECORD_AUDIO)이 꼭 필요한지는 실차·마켓 심사 전에 확인해 필요 없으면 뺍니다. 운전자 화면 문장 길이는 플랫폼 허용 길이(기본 120자) 안으로 자릅니다.
 
@@ -183,7 +183,7 @@ adb logcat -d -s DP | grep -E "stt_init|stt_listen|stt_result|voice_cmd"
 
 | 경로 | 내용 |
 |---|---|
-| `core/` | 순수 Kotlin 판단 코어 — 약속 엔진(5종) · 일몰 계산(NOAA) · 출발 전 계획 · 발화 스케줄러(늦은 알림 규칙) · 내비에 물러서기 · 침묵 구간 게이트 · 주행 세션(상태 기계) · 화면 모드 결정 · 음성 명령 뜻 풀이(`voice/`) · 리플레이 재생기 · 기기 안 기록. 스펙 98개 |
+| `core/` | 순수 Kotlin 판단 코어 — 약속 엔진(5종) · 일몰 계산(NOAA) · 출발 전 계획 · 발화 스케줄러(늦은 알림 규칙) · 내비에 물러서기 · 침묵 구간 게이트 · 주행 세션(상태 기계) · 화면 모드 결정 · 음성 명령 뜻 풀이(`voice/`) · 리플레이 재생기 · 기기 안 기록. 스펙 99개 |
 | `app/` | Pleos 차량용 앱 — `platform/`(Vehicle SDK · CarPropertyManager · CarUxRestrictions · NaviHelper · Pleos FusedLocation(+LocationManager 대체) · Pleos TextToSpeech · Pleos SpeechToText) · `DrivePromiseService`(10 Hz 판단 루프, 포그라운드) · `MainActivity`(정차 화면) · `DriveActivity`(주행 화면) · `store/`(기록·설정) · `replay/` |
 | `demo/trips/` | 시연 주행 4개(JSON) — 앱 assets이자 코어 스펙 S72의 입력 |
 | `docs/` | `MANUAL.md`(기동·재기동·운영) · `contracts.md`(설계 계약) · `demo/`(시연 영상) |
@@ -205,7 +205,7 @@ adb logcat -d -s DP | grep -E "stt_init|stt_listen|stt_result|voice_cmd"
 ./gradlew :core:test
 ```
 
-결과는 `core/build/test-results/test/*.xml`(S01~S98, 98개 — 1.3.0 검토 반영 S84~S98 포함)에 남습니다.
+결과는 `core/build/test-results/test/*.xml`(S01~S99, 99개 — 1.3.0 검토 반영 S84~S99 포함)에 남습니다.
 
 에뮬레이터 스모크(설치 → 위치 시험 → 음성 명령 시험 → 리플레이 4개 → 발화 열·요약·주행 화면·질문 뒤 듣기 판정)는 개발 PC의 실행 스크립트로 돌립니다(저장소 밖).
 
@@ -220,7 +220,7 @@ adb logcat -d -s DP | grep -E "stt_init|stt_listen|stt_result|voice_cmd"
 ## 8. 개발 방식 — 생성형 AI 활용 고지
 
 - 문제 정의, 약속 규칙과 설계 판단, 시험 기준, 에뮬레이터 실행 검증은 참가자가 직접 했습니다.
-- 코드·문서·시연 영상 제작에는 생성형 AI 도구(Anthropic Claude)를 활용했습니다. AI가 만든 결과물은 참가자가 모두 검토하고, 자동 시험(98개)과 Pleos Connect 에뮬레이터 실행으로 확인했습니다.
+- 코드·문서·시연 영상 제작에는 생성형 AI 도구(Anthropic Claude)를 활용했습니다. AI가 만든 결과물은 참가자가 모두 검토하고, 자동 시험(99개)과 Pleos Connect 에뮬레이터 실행으로 확인했습니다.
 - 일부 영상·그림 파일에는 이 도구가 붙인 출처 정보(C2PA 콘텐츠 자격 증명)가 들어 있습니다. 개인 정보는 들어 있지 않습니다.
 
 *Built with AI assistance: the participant defined the problem, the promise rules, the design decisions and test criteria, and verified everything on the emulator; code, documents and the demo video were produced with a generative AI tool (Anthropic Claude) and reviewed by the participant. Some media files carry C2PA provenance metadata.*
