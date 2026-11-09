@@ -32,8 +32,8 @@ android {
         applicationId = "app.drivepromise"
         minSdk = 33
         targetSdk = 35
-        versionCode = 10
-        versionName = "1.3.3"   // 공모전 1차 제출본(11/14) — 1.3.2 + 11/9 종합 점검 P2(G2와 무관한 7건: 늦은 예고 남은 분 · 시계 점프(단조 시계로 감지) · 회전 거리 적분 · 목적지 정차는 쉼 아님 · 도착 뒤 계속 주행 · 시간대와 맞지 않는 좌표 · 헤드리스 사용자 0)
+        versionCode = 11
+        versionName = "1.3.4"   // 공모전 1차 제출본(11/14) — 1.3.3 + 11/9 종합 점검 P2 나머지(빗길 기준 속도는 말하는 순간 값 · 지난 ETA는 모름 · 속도를 모르면 ‘섰다’로 보지 않음) + G2 문법 후보 이식(기본 v130 그대로)
     }
 
     signingConfigs {

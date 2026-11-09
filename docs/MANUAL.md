@@ -1,6 +1,6 @@
 # 운전약속(DrivePromise) 기동·재기동·운영 매뉴얼
 
-대상: 심사·시연·개발에서 Pleos Connect 에뮬레이터로 앱을 실행하는 사람. 버전 1.3.3(versionCode 10) 기준 — 위치는 Pleos FusedLocation SDK(안 되면 LocationManager 자동 전환), 음성 명령은 Pleos SpeechToText SDK(ON_DEVICE, 안 되면 버튼만).
+대상: 심사·시연·개발에서 Pleos Connect 에뮬레이터로 앱을 실행하는 사람. 버전 1.3.4(versionCode 11) 기준 — 위치는 Pleos FusedLocation SDK(안 되면 LocationManager 자동 전환), 음성 명령은 Pleos SpeechToText SDK(ON_DEVICE, 안 되면 버튼만).
 
 ## 0. 한눈에
 
@@ -263,7 +263,7 @@ adb shell am start-foreground-service -n $SVC --es cmd stt_text --es text "'다�
 | ‘말하기’가 ‘말하기 없음’·‘다시 시도’ | `grep -E "stt_init\|stt_perm"` | `err=no_sdk` → 음성 인식 SDK가 빠진 빌드(`-PdpStt=false`) · `PERMISSION_DENIED` → 1-2의 STT_SERVICE·RECORD_AUDIO `pm grant` 후 ‘다시 시도’ · `ON_DEVICE_ENGINE_ERROR` → 에뮬레이터 이미지의 음성 엔진 문제(앱은 버튼으로 동작) |
 | 말해도 ‘잘 못 들었어요’ | `grep stt_result` 의 `why=`·`rms=` | `timeout_empty`·`rms=0.0` → 에뮬레이터 마이크가 꺼짐(3-6의 Extended Controls 또는 `adb emu avd hostmicon`) · 글자는 왔는데 뜻이 UNKNOWN → 알아듣는 말(3-6) 중 하나로 |
 | 음성 파일 주입이 ‘들림 없음’ | `grep "stt_feed s=send"` 의 `bytes=` | 만든 PCM보다 작으면 조각이 덜 감(셸 반복문의 `adb shell`에 `< /dev/null`) · 같은데도 글자가 없으면 인식기(ON_DEVICE 엔진) 문제 — `stt_error` 확인 |
-| 리플레이가 끝났는데 요약이 안 들림 | `grep -E "summary|replay_back"` | 1.2.1부터 요약을 다 말한 뒤 실차로 돌아감(`replay_back why=idle`) — `why=timeout`이면 말이 45초 넘게 밀린 것(내비 안내가 길게 이어짐) |
+| 리플레이가 끝났는데 요약이 안 들림 | `grep -E "summary\|replay_back"` | 1.2.1부터 요약을 다 말한 뒤 실차로 돌아감(`replay_back why=idle`) — `why=timeout`이면 말이 45초 넘게 밀린 것(내비 안내가 길게 이어짐) |
 | 말이 중간에 끊기고 다시 나옴 | `grep -E "tts_watchdog\|event=dur"` | 재생 끝 알림이 오지 않아 감시 타이머가 끊은 것(1.3.0). 세 번 실패하면 그 문장은 버림 — TTS 엔진·오디오 확인 |
 | 주행이 끝났는데 다음 주행이 안 잡힘 | `grep event=renew` | 없으면 요약이 아직 남음(최대 45초) · 앱 강제 종료 뒤면 정차 화면을 한 번 열기 |
 | 재부팅 뒤 앱이 안 뜸 | `grep -E "boot"` | 설치 뒤 한 번도 앱을 안 열었으면 안드로이드가 부팅 알림을 보내지 않음(정상) · ‘시동 때 자동 시작: 끔’인지 확인 |

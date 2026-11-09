@@ -38,6 +38,9 @@ object P2Specs {
         "S119 쉬기 — 시동 신호 없이 쉬지 않고 2시간 30분 달려 목적지에 세우면 못 지킴(목적지 정차는 쉼이 아님) · 주행 중 20분 쉼은 그대로 쉼(11/9 P2, B21)" to ::s119,
         "S120 도착 소식 뒤에도 계속 달리면 도착을 지우고 주행을 이어 감 → 세운 뒤 요약을 말함(11/9 P2, B22)" to ::s120,
         "S121 시간대와 맞지 않는 좌표(마운틴뷰·0,0)로는 해 지기 전을 판단하지 않음 — 말 없음·모름 · 서울은 그대로(11/9 P2, B24)" to ::s121,
+        "S122 빗길 과속 문장의 기준 속도는 말하는 순간의 제한속도로 — 밀린 사이 100 → 60 도로가 되면 ‘48 아래로’ · 60 → 100이 되어 과속이 아니면 말 없음(11/9 P2, #21)" to ::s122,
+        "S123 지난 ETA(2분 넘음)는 모름 — ‘지금 도착’으로 보아 주행 중 ‘지키는 중’이 되지 않음 · 2분 안은 그대로(11/9 P2, #22)" to ::s123,
+        "S124 속도를 모르면 — ‘섰다’로 보지 않음(신호 대기 창 닫힘) · 비 오는 동안 빗길 판정 ‘모름’, 주행 끝도 모름(11/9 P2, #23)" to ::s124,
     )
 }
 
@@ -205,4 +208,76 @@ private fun s121() {
     val e = PromiseEngine(listOf(Promise.HomeBeforeDark(30)), q)
     e.tick(World(t, d(t), fx(t), etaMs = 30 * MIN))
     eq(e.statuses["dark"], PromiseStatus.ON_TRACK, "서울 11:00(30분 뒤 도착)")
+}
+
+private fun s122() {
+    var open = false
+    val q = SpeechScheduler(QuietPolicy(), object : QuietWindows {
+        override fun normal(nowMs: Long, needMs: Long) = open
+        override fun stopWindow(nowMs: Long) = false
+    })
+    val e = PromiseEngine(listOf(Promise.RainCare()), q)
+    e.onNavi(NaviEvent.SpeedLimit(0, 100))
+    val said = mutableListOf<String>()
+    var t = 0L
+    fun v(t: Long) = VehicleSnapshot(t, gear = Gear.D, speedMps = (95 / 3.6).toFloat(), wiper = app.drivepromise.core.model.Wiper.LOW)
+    while (t <= 3 * MIN) {
+        if (t == 2 * MIN) e.onNavi(NaviEvent.SpeedLimit(t, 60))   // 과속 문장이 밀린 사이 제한 60 도로로
+        open = t >= 2 * MIN + 10_000
+        val w = World(t, v(t)); e.tick(w); say(q, w, said); t += 500
+    }
+    val line = said.firstOrNull { it.startsWith("rain.fast") }
+    ok(line != null && line.contains("95예요. 48 아래로"), "말하는 순간 기준(60×0.8=48): $line")
+    // 거꾸로: 60 도로에서 70으로 과속 → 밀린 사이 100 도로(기준 80)가 되면 이제 과속이 아니므로 말하지 않음(‘70이에요. 80 아래로’ 같은 말 없음)
+    var open2 = false
+    val q2 = SpeechScheduler(QuietPolicy(), object : QuietWindows {
+        override fun normal(nowMs: Long, needMs: Long) = open2
+        override fun stopWindow(nowMs: Long) = false
+    })
+    val e2 = PromiseEngine(listOf(Promise.RainCare()), q2)
+    e2.onNavi(NaviEvent.SpeedLimit(0, 60))
+    val said2 = mutableListOf<String>()
+    t = 0L
+    while (t <= 3 * MIN) {
+        if (t == 2 * MIN) e2.onNavi(NaviEvent.SpeedLimit(t, 100))
+        open2 = t >= 2 * MIN + 10_000
+        val w = World(t, VehicleSnapshot(t, gear = Gear.D, speedMps = (70 / 3.6).toFloat(), wiper = app.drivepromise.core.model.Wiper.LOW)); e2.tick(w); say(q2, w, said2); t += 500
+    }
+    ok(said2.none { it.startsWith("rain.fast") }, "기준이 80이 되면 70은 과속 아님 — 말 없음: $said2")
+}
+
+private fun s123() {
+    val t0 = kst(14, 14, 0)
+    val q = SpeechScheduler(QuietPolicy(), OPENW)
+    val e = PromiseEngine(listOf(Promise.HomeBeforeDark(30)), q)
+    e.onNavi(NaviEvent.Trip(t0, t0 + 10 * MIN, 5_000))
+    e.tick(World(t0 + 11 * MIN, d(t0 + 11 * MIN), fx(t0 + 11 * MIN)))
+    eq(e.statuses["dark"], PromiseStatus.ON_TRACK, "ETA 1분 지남(유예 안)")
+    e.tick(World(t0 + 15 * MIN, d(t0 + 15 * MIN), fx(t0 + 15 * MIN)))
+    eq(e.statuses["dark"], PromiseStatus.UNKNOWN, "ETA 5분 지남·도착 소식 없음 → 모름")
+    val c = P2Clock(t0)
+    val s = TripSession(listOf(Promise.RestEvery(120)), P2Spk(), c)
+    s.onNavi(NaviEvent.Trip(t0, t0 + 10 * MIN, 5_000))
+    eq(s.world(t0 + 11 * MIN).etaMs, 0L, "세션: 1분 지남 → 0")
+    eq(s.world(t0 + 15 * MIN).etaMs, null, "세션: 5분 지남 → 모름(쉬기 ‘곧 도착’ 문장에 쓰지 않음)")
+}
+
+private fun s124() {
+    val u = VehicleSnapshot(0, gear = Gear.D, speedMps = null)
+    ok(!u.stopped && u.driving, "기어 D·속도 모름: 섰다고 보지 않음")
+    val g = QuietGate()
+    var t = 0L
+    while (t <= 5_000) { g.update(t, VehicleSnapshot(t, gear = Gear.D, speedMps = null)); t += 100 }
+    ok(!g.stopWindow(3_000), "속도 모름: 신호 대기 창 닫힘")
+    val g2 = QuietGate()
+    g2.update(0, VehicleSnapshot(0, gear = Gear.D, speedMps = 0f))
+    ok(g2.stopWindow(1_000), "속도 0(알고 있음): 신호 대기 창 그대로")
+    val q = SpeechScheduler(QuietPolicy(), OPENW)
+    val e = PromiseEngine(listOf(Promise.RainCare()), q)
+    val said = mutableListOf<String>()
+    t = 0L
+    while (t <= 3 * MIN) { val w = World(t, VehicleSnapshot(t, gear = Gear.D, speedMps = null, wiper = app.drivepromise.core.model.Wiper.LOW)); e.tick(w); say(q, w, said); t += 1_000 }
+    eq(e.statuses["rain"], PromiseStatus.UNKNOWN, "비 오는 중 속도 모름")
+    eq(e.endTrip(World(t, VehicleSnapshot(t, gear = Gear.P, speedMps = null, wiper = app.drivepromise.core.model.Wiper.LOW)))["rain"], PromiseStatus.UNKNOWN, "주행 끝 — 속도를 몰랐으면 모름")
+    ok(said.none { it.startsWith("rain.fast") }, "과속 문장 없음: $said")
 }

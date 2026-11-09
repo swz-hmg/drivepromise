@@ -32,7 +32,7 @@ import app.drivepromise.core.speech.AudioUsage
 import app.drivepromise.core.speech.DigestItem
 import app.drivepromise.core.speech.Lang
 import app.drivepromise.core.voice.ListenTrigger
-import app.drivepromise.core.voice.VoiceCommands
+import app.drivepromise.core.voice.VoiceGrammar
 import app.drivepromise.core.voice.VoiceIntent
 import app.drivepromise.core.speech.Priority
 import app.drivepromise.core.speech.QuietPolicy
@@ -228,7 +228,8 @@ class TripSession(
         vehicle = lastVehicle,
         fix = lastFix,
         drivingMs = rest.drivingMs,
-        etaMs = etaEpochMs?.let { (it - now).coerceAtLeast(0) },
+        // 1.3.4(#22): 유예(2분)보다 오래 지난 ETA는 모름 — ‘지금 도착’으로 보지 않음(쉬기 ‘곧 도착’·해 지기 전 판정)
+        etaMs = etaEpochMs?.let { if (it < now - policy.engine.staleEtaGraceMs) null else (it - now).coerceAtLeast(0) },
         lang = lang,
     )
 
@@ -290,7 +291,7 @@ class TripSession(
                     arr != null && parked -> end("arrived")
                     // 1.3.3(P2, B22): 도착 소식 5분 뒤에도 움직이는 중이면 도착이 아니었던 것(경유지·옆 통과) — 도착을 지우고 주행을 이어 감.
                     // 달리는 중에 주행을 끝내면 요약은 세운 뒤에만 말하므로 새 세션에 밀려 사라지던 것
-                    arr != null && now - arr >= policy.endAfterArrivedMs && v?.driving == true && v.stopped != true -> {
+                    arr != null && now - arr >= policy.endAfterArrivedMs && v?.driving == true && v.movingKnown -> {
                         arrivedAt = null; engine.clearArrival(); listener.onArrivalCleared(now)
                     }
                     arr != null && now - arr >= policy.endAfterArrivedMs -> end("arrived_timeout")
@@ -413,7 +414,7 @@ class TripSession(
      */
     fun onVoice(text: String, trigger: ListenTrigger): VoiceIntent {
         val now = clock.nowMs()
-        val intent = VoiceCommands.match(text, lang)
+        val intent = VoiceGrammar.match(text, lang)   // 1.3.4: 문법 선택은 VoiceGrammar.ACTIVE 한 곳(기본 V130 = VoiceCommands 그대로)
         val qEnd = questionEndMs
         val inQuestion = questionKey != null && (trigger == ListenTrigger.QUESTION || (qEnd != null && now - qEnd <= policy.answerWindowMs))
         val q = if (inQuestion) questionKey else null

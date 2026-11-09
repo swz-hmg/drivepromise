@@ -49,7 +49,11 @@ data class VehicleSnapshot(
     /** 주행 중: 정차가 아니고 기어를 알거나(R·N·D) 움직이는 중 */
     val driving: Boolean get() = !parked && (gear != Gear.UNKNOWN || (speedMps ?: 0f) > 0.5f)
 
-    val stopped: Boolean get() = (speedMps ?: 0f) < 0.5f
+    /** 1.3.4(#23): 속도를 모르면 ‘섰다’고 보지 않음 — 차속 권한이 없을 때 신호 대기 창이 늘 열리던 것 */
+    val stopped: Boolean get() = speedMps != null && speedMps < 0.5f
+
+    /** 움직임이 확인됨(속도를 알고 0.5 m/s 이상). 1.3.3까지의 `stopped != true`와 같은 값 — 구역 경계·도착 지우기는 이 뜻 그대로 */
+    val movingKnown: Boolean get() = speedMps != null && speedMps >= 0.5f
 }
 
 /** 부분 변경 — 속성별 콜백·리플레이 vehicle 항목. null은 ‘바뀌지 않음’ */

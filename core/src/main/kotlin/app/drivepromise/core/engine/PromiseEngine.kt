@@ -54,6 +54,8 @@ data class EnginePolicy(
     val highwayAheadWords: List<String> = listOf("IC", "JC", "고속도로", "고속국도", "톨게이트", "나들목", "Expressway"),
     val highwayAheadMinM: Int = 150,
     val highwayAheadMaxM: Int = 1_500,
+    /** 1.3.4(#22): 도착 예정 시각이 이만큼 지났는데 도착 소식이 없으면 ETA를 모름으로(‘지금 도착’으로 보지 않음) — 내비가 갱신을 멈춘 경우 */
+    val staleEtaGraceMs: Long = 2 * 60_000,
     /** 1.3.2(P1-4): 구역 안↔밖을 바꾸려면 새 쪽 위치가 이만큼 이어져야(서로 다른 위치 수 · 첫 위치부터 시간) — 지하 출구·터널의 튄 위치 1건으로 ‘못 지킴’이 되던 문제(B07) */
     val zoneConfirmFixes: Int = 2,
     val zoneConfirmMs: Long = 5_000,
@@ -99,6 +101,9 @@ class PromiseEngine(
     private var rainFastSince: Long? = null
     private var rainFastSpoken = false
     private var rainFastEver = false   // 11/5: 빗길 과속이 한 번이라도 있었으면 주행 끝 판정은 못 지킴
+    // 1.3.4(#23): 비가 온 동안 속도를 한 번이라도 알았는가 — 몰랐으면 주행 끝 ‘모름’(속도 없음을 0으로 보고 ‘지킴’이던 것)
+    private var rainEver = false
+    private var speedSeenInRain = false
     private var zoneEdgeWarned = false
     private var outside = false
     private var outsideEver = false    // 11/5: 구역을 한 번이라도 벗어났으면 주행 끝 판정은 못 지킴(고속도로와 같은 규칙)
@@ -172,7 +177,7 @@ class PromiseEngine(
                     else darkAt(arrivedAt ?: lastDrivingAt ?: now, w)?.let { dk -> if (dk) PromiseStatus.MISSED else PromiseStatus.KEPT } ?: cur
                 // 1.3.0(C03): 도로·와이퍼 신호를 한 번도 못 받았으면 ‘모름’ — 빗길은 30초 이어진 과속만 ‘못 지킴’(끝 순간 1틱 과속은 세지 않음)
                 is Promise.AvoidHighway -> if (highwayEver) PromiseStatus.MISSED else if (!roadSeen) PromiseStatus.UNKNOWN else PromiseStatus.KEPT
-                is Promise.RainCare -> if (rainFastEver) PromiseStatus.MISSED else if (!wiperSeen) PromiseStatus.UNKNOWN else PromiseStatus.KEPT
+                is Promise.RainCare -> if (rainFastEver) PromiseStatus.MISSED else if (!wiperSeen || (rainEver && !speedSeenInRain)) PromiseStatus.UNKNOWN else PromiseStatus.KEPT
                 is Promise.RestEvery -> if (w.drivingMs >= p.everyMin * 60_000L) PromiseStatus.MISSED else PromiseStatus.KEPT
                 is Promise.StayInZone -> if (outside || outsideEver) PromiseStatus.MISSED else if (cur == PromiseStatus.UNKNOWN) cur else PromiseStatus.KEPT
             }
@@ -188,7 +193,12 @@ class PromiseEngine(
         return SolarCalc.at(w.tMillis, f.lat, f.lon, policy.zone).sunsetMs
     }
 
-    private fun arrival(w: World): Long? = w.etaMs?.let { w.tMillis + it } ?: etaEpochMs
+    /** 1.3.4(#22): 지난 ETA(유예 2분 넘음)는 모름 — 지난 ETA를 ‘지금 도착’으로 보면 주행 중에도 ‘지키는 중’이 됨 */
+    private fun arrival(w: World): Long? {
+        w.etaMs?.let { return w.tMillis + it }
+        val e = etaEpochMs ?: return null
+        return if (e < w.tMillis - policy.staleEtaGraceMs) null else maxOf(e, w.tMillis)
+    }
 
     /** 1.3.2(P1-1): 그 시각이 어두운가 — 그 지역 날짜의 일몰 뒤이거나 일출 전. 해가 지지 않는 곳(일몰 없음)은 null */
     private fun darkAt(t: Long, w: World): Boolean? {
@@ -297,20 +307,26 @@ class PromiseEngine(
         }
         if (raining && wiperOffSince != null && now - wiperOffSince!! >= policy.rainOffMs) raining = false
         if (!raining) return if (v.wiper == Wiper.UNKNOWN && wiperOnSince == null) PromiseStatus.UNKNOWN else PromiseStatus.ON_TRACK
-        val limit = speedLimitKph?.takeIf { it > 0 } ?: policy.rainDefaultLimitKph   // 1.3.1(P0-1): 0 = 이 도로 정보 없음 → 기본값(‘0 아래로 줄여요’ 방지)
-        val target = (limit * policy.rainSpeedFactor).toInt()
-        val kph = ((v.speedMps ?: 0f) * 3.6f).toInt()
+        rainEver = true
+        val target = rainTarget()
+        val sp = v.speedMps ?: return PromiseStatus.UNKNOWN   // 1.3.4(#23): 속도를 모르면 빗길 과속을 판단하지 않음
+        speedSeenInRain = true
+        val kph = (sp * 3.6f).toInt()
         val fast = kph > target
         if (fast) { if (rainFastSince == null) rainFastSince = now } else rainFastSince = null
         if (fast && rainFastSince != null && now - rainFastSince!! >= policy.rainFastHoldMs) rainFastEver = true
         if (fast && !rainFastSpoken && now - rainFastSince!! >= policy.rainFastHoldMs) {
             rainFastSpoken = true
             submit(p.id, "fast", now, Priority.PROMISE, 3_500, 2_000, Validity.WHILE_STATE, deadline = now,
-                stillValid = { ww -> raining && ((ww.vehicle?.speedMps ?: 0f) * 3.6f).toInt() > target },
-                render = { c -> PromisePhrases.rainFast(c.world.lang, ((c.world.vehicle?.speedMps ?: 0f) * 3.6f).toInt(), target, c.short) })
+                // 1.3.4(#21): 기준 속도는 말하는 순간의 제한속도로 다시 계산(그 사이 도로가 바뀌면 옛 기준을 말하던 것)
+                stillValid = { ww -> raining && ww.vehicle?.speedMps?.let { (it * 3.6f).toInt() > rainTarget() } == true },
+                render = { c -> PromisePhrases.rainFast(c.world.lang, ((c.world.vehicle?.speedMps ?: 0f) * 3.6f).toInt(), rainTarget(), c.short) })
         }
         return if (fast) PromiseStatus.AT_RISK else PromiseStatus.ON_TRACK
     }
+
+    /** 빗길 기준 속도 = 제한속도(모르거나 0이면 기본 60) × 0.8 — 1.3.1(P0-1) · 1.3.4(#21) 말하는 순간에도 이 값 */
+    private fun rainTarget(): Int = ((speedLimitKph?.takeIf { it > 0 } ?: policy.rainDefaultLimitKph) * policy.rainSpeedFactor).toInt()
 
     // ---------------------------------------------------------------- 2시간 쉬기(말은 RestTracker)
     private fun rest(p: Promise.RestEvery, w: World): PromiseStatus {
@@ -331,7 +347,7 @@ class PromiseEngine(
         if (zoneHist.isEmpty() || zoneHist.last().first < f.tMillis) zoneHist.addLast(f.tMillis to d)
         while (zoneHist.size > 2 && zoneHist[1].first <= f.tMillis - policy.zoneEdgeWindowMs) zoneHist.removeFirst()
         val ref = zoneHist.first()
-        val moving = w.vehicle?.stopped != true
+        val moving = w.vehicle?.movingKnown ?: true   // 1.3.4: 속도를 모르면 움직인다고 보지 않음(1.3.3과 같은 값)
         val movingOut = moving && f.tMillis - ref.first >= 3_000 && d - ref.second >= policy.zoneEdgeMoveM
         prevDist = d
         val now = w.tMillis
