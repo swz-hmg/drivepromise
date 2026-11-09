@@ -54,14 +54,6 @@ class PleosRouteSource(private val ctx: Context, private val main: Handler) : Ro
         inited = false
     }
 
-    /** 1.3.1(P0-9): 개인 장소(즐겨찾기·최근 목적지·목적지·경유지·현재 위치)가 든 콜백은 기록에 원문을 남기지 않음 — ‘이름·주소 기록 안 함’ */
-    private fun redact(m: String, args: Array<out Any?>?, s: String): String {
-        if (PRIVATE_CB.none { m.contains(it) }) return s.take(300)
-        val a = args?.firstOrNull()
-        val n = when (a) { is Collection<*> -> a.size; is Array<*> -> a.size; null -> 0; else -> 1 }
-        return "redacted n=$n"
-    }
-
     private fun init() {
         try {
             val h = NaviHelper(ctx.applicationContext)
@@ -70,7 +62,7 @@ class PleosRouteSource(private val ctx: Context, private val main: Handler) : Ro
                 val s = args?.joinToString(" ") { it.toString() } ?: ""
                 if (lastArgs[m] != s) {   // 같은 값이 매초 오는 콜백(onCurrentRoadSpeedLimit 0 …)은 바뀔 때만 기록
                     lastArgs[m] = s
-                    L.log("navi", "cb" to m, "args" to redact(m, args, s))   // 1.3.1(P0-9): 즐겨찾기·최근 목적지·목적지·현재 위치는 내용 대신 개수만
+                    L.log("navi", "cb" to m, "args" to LogMask.navi(m, args?.firstOrNull(), s))   // 1.3.1(P0-9): 개인 장소 콜백은 개수만 · 그 밖의 콜백도 이름·주소는 글자 수만, 좌표는 소수 3자리(LogMask)
                 }
                 main.post { onCallback(m, s) }
             }
@@ -181,7 +173,7 @@ class PleosRouteSource(private val ctx: Context, private val main: Handler) : Ro
 
     companion object {
         /** 1.3.1(P0-9): 개인 장소가 담기는 NaviHelper 콜백 — 기록에는 개수만 */
-        private val PRIVATE_CB = listOf("Bookmark", "RecentDestination", "Destination", "WayPoint", "CurrentLocation")
+        // 1.3.1: 개인 장소 콜백 목록은 LogMask.PRIVATE_CB 로 옮김
         /** requestRoute 뒤 이 시간 안의 onRouteCancelled 는 ‘앞 경로가 새 요청으로 바뀜’으로 봄(실패로 끝내지 않음) */
         const val REPLACED_GRACE_MS = 3_000L
         /** 그때 새 경로 시작을 더 기다리는 시간 — 넘으면 ROUTE_CANCELLED 로 끝냄(11/6 실측: 5.8초 뒤 시작) */
