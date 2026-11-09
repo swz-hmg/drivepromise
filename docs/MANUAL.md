@@ -1,6 +1,6 @@
 # 운전약속(DrivePromise) 기동·재기동·운영 매뉴얼
 
-대상: 심사·시연·개발에서 Pleos Connect 에뮬레이터로 앱을 실행하는 사람. 버전 1.3.2(versionCode 9) 기준 — 위치는 Pleos FusedLocation SDK(안 되면 LocationManager 자동 전환), 음성 명령은 Pleos SpeechToText SDK(ON_DEVICE, 안 되면 버튼만).
+대상: 심사·시연·개발에서 Pleos Connect 에뮬레이터로 앱을 실행하는 사람. 버전 1.3.3(versionCode 10) 기준 — 위치는 Pleos FusedLocation SDK(안 되면 LocationManager 자동 전환), 음성 명령은 Pleos SpeechToText SDK(ON_DEVICE, 안 되면 버튼만).
 
 ## 0. 한눈에
 
@@ -227,7 +227,7 @@ adb shell am start-foreground-service -n $SVC --es cmd stt_text --es text "'다�
 | 상태 한 줄(event=status_now, 위치 원천 `loc=` 포함) | `adb shell am start-foreground-service -n $SVC --es cmd status` |
 | 말한 문장·요약·화면 모드만 | `adb logcat -d -s DP \| grep -E "event=(speak\|summary\|mode)"` |
 | 말 길이 실측(1.3.0) | `adb logcat -d -s DP \| grep -E "event=(dur\|tts_watchdog)"` — `dur … est= ms= over=`: 예상 길이(글자 수 × 0.165초 + 0.3초)와 실제 길이 · `tts_watchdog`: 재생 끝 알림이 오지 않아 말을 끊고 다시 시도(예상 길이 × 2.5, 최소 15초) |
-| 보호 기록(1.3.2) | `adb logcat -d -s DP \| grep -E "event=(tts_cancel\|tts_stale\|step_error\|fgs_error\|adapter_retry)"` — `tts_cancel`·`tts_stale`: 세션을 바꿀 때 말을 멈추고 끊은 말의 끝 소식은 무시 · `step_error`: 판정 루프 예외(앱은 계속, 처음 5번·100번마다 기록) · `fgs_error`: 포그라운드 시작이 막힘(서비스는 조용히 멈춤) · `adapter_retry`: 차량·내비 연결 다시(30초마다 최대 10번) · `screen s=unblock`: 주행 화면 차단 기억을 주행 끝에 지움 · `settings apply=at_renew`: 주행이 막 끝났으면 요약 뒤 새 세션에서 반영 · `settings zoneHere=not_real`: 시연 중엔 구역 중심을 저장하지 않음 |
+| 보호 기록(1.3.2) | `adb logcat -d -s DP \| grep -E "event=(tts_cancel\|tts_stale\|step_error\|fgs_error\|adapter_retry)"` — `tts_cancel`·`tts_stale`: 세션을 바꿀 때 말을 멈추고 끊은 말의 끝 소식은 무시 · `step_error`: 판정 루프 예외(앱은 계속, 처음 5번·100번마다 기록) · `fgs_error`: 포그라운드 시작이 막힘(서비스는 조용히 멈춤) · `adapter_retry`: 차량·내비 연결 다시(30초마다 최대 10번) · `screen s=unblock`: 주행 화면 차단 기억을 주행 끝에 지움 · `settings apply=at_renew`: 주행이 막 끝났으면 요약 뒤 새 세션에서 반영 · `settings zoneHere=not_real`: 시연 중엔 구역 중심을 저장하지 않음 · (1.3.3) `clock_jump`: 벽시계가 5초 넘게 뜀(시각 보정) — 그 사이는 운전 시간에 넣지 않음 · `arrival_cleared`: 도착 소식 5분 뒤에도 달리는 중이라 도착을 지우고 주행을 이어 감 · `rest_undo_final_park`: 오래 세워 둬서 끝난 주행은 목적지 정차를 쉼으로 치지 않음 · `boot skip=headless_system_user`: 화면 없는 시스템 사용자(0)에서는 시작하지 않음 |
 
 주행 기록은 앱 내부 저장소 `files/ledger/YYYY-MM.jsonl`에 남고 밖으로 보내지 않습니다. 좌표는 기록 파일에 저장하지 않습니다.
 

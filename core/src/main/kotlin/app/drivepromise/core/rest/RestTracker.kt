@@ -54,6 +54,10 @@ class RestTracker(
     private var mainDone = false
     private var praisePending = false
     private var lastParked = false
+    // 1.3.3(P2, B21): 마지막 쉼 — 그 쉼이 주행을 끝낸 마지막 정차 안에서 생겼으면(목적지에 세운 것) 그 주행 판정에는 쉼으로 치지 않음
+    private var lastRestSince: Long? = null
+    private var beforeRest: Triple<Long, Boolean, Boolean>? = null   // (운전 시간, 예고 했음, 본 알림 했음)
+    private var overBeforeRest = false
     /** 1.3.0(C13): 이번 주행에서 목표 시간을 한 번이라도 넘겼는가 — ‘알림 뒤 쉬면 지킴’(Q027)은 그대로, 넘긴 사실은 요약에 따로 */
     var overTargetEver = false
         private set
@@ -134,7 +138,38 @@ class RestTracker(
         }
     }
 
+    /**
+     * 1.3.3(P2, B11): 시계가 뛰었음(앱이 단조 시계와 비교해 알림) — 그 사이는 운전·정차 시간으로 세지 않음.
+     * 부팅 직후 시각 보정으로 3시간 앞으로 뛰면 운전 시간이 3시간 늘던 것. 정차·마지막 운전 시각도 같이 옮겨 ‘쉼’으로 잘못 치지 않게
+     */
+    fun onClockJump(deltaMs: Long) {
+        lastT = null
+        parkedSince = parkedSince?.plus(deltaMs)
+        lastDrivingAt = lastDrivingAt?.plus(deltaMs)
+    }
+
+    /**
+     * 1.3.3(B21): 주행이 ‘오래 세워 둠’으로 끝날 때 — 그 마지막 정차 안에서 생긴 쉼은 이번 주행 판정에서 되돌림(목적지에 세운 것은 주행 중 쉼이 아님).
+     * 시동 신호가 없는 차(에뮬레이터)에서 쉬지 않고 2시간 30분 달려 집에 세우면 30분 뒤 ‘알림 뒤 쉬셨어요’ + 지킴이던 것. 다음 주행에는 쉼으로 그대로(저장값 복원 규칙).
+     */
+    fun undoFinalParkRest(): Boolean {
+        val since = lastRestSince ?: return false
+        val b = beforeRest ?: return false
+        if (!lastParked || parkedSince != since) return false
+        drivingMs = b.first
+        headsUpDone = b.second
+        mainDone = b.third
+        overTargetEver = overBeforeRest || b.first >= targetMs
+        praisePending = false
+        lastRestSince = null
+        beforeRest = null
+        return true
+    }
+
     private fun rest(since: Long, nowMs: Long) {
+        lastRestSince = since
+        beforeRest = Triple(drivingMs, headsUpDone, mainDone)
+        overBeforeRest = overTargetEver
         val exposed = headsUpDone || mainDone
         ledger.accept(LedgerEvent.RestTaken(nowMs, since, drivingMs))
         scheduler.cancel("rest.", nowMs, "rested")
@@ -153,7 +188,7 @@ class RestTracker(
         validity = Validity.UNTIL_DEADLINE,
         stillValid = { w -> w.drivingMs in headsUpAtMs until headsUpUntilMs },
         speakWhen = DRIVING,
-        render = { c -> Phrases.headsUp(c.world.lang, policy, c.short) },
+        render = { c -> Phrases.headsUp(c.world.lang, policy, c.short, c.world.drivingMs) },   // 1.3.3(B10): 말하는 순간의 남은 분
     )
 
     private fun main(nowMs: Long) = Utterance(
@@ -212,11 +247,15 @@ object Phrases {
 
     fun enDuration(totalMin: Int): String = enDuration(totalMin.toLong())
 
-    fun headsUp(lang: Lang, p: RestPolicy, short: Boolean): String = when (lang) {
-        Lang.KO -> if (short) "곧 ${koDuration(p.targetMin)}이에요. 쉴 곳을 봐 두세요."
-        else "${p.leadMin}분쯤 뒤면 ${koDuration(p.targetMin)}이에요. 다음 쉴 곳에서 쉬어 가요."
-        Lang.EN -> if (short) "Almost ${enDuration(p.targetMin)}. Plan a stop."
-        else "About ${p.leadMin} minutes to ${enDuration(p.targetMin)}. Let's rest at the next stop."
+    /** 1.3.3(B10): 남은 분은 말하는 순간 값(반올림) — 침묵 구간에 밀려 1:57:30에 나가면 ‘10분쯤’이 아니라 ‘3분쯤’. drivingMs를 모르면 leadMin */
+    fun headsUp(lang: Lang, p: RestPolicy, short: Boolean, drivingMs: Long? = null): String {
+        val left = drivingMs?.let { ((p.targetMin * 60_000L - it + 30_000L) / 60_000L).toInt().coerceIn(1, p.leadMin) } ?: p.leadMin
+        return when (lang) {
+            Lang.KO -> if (short) "곧 ${koDuration(p.targetMin)}이에요. 쉴 곳을 봐 두세요."
+            else "${left}분쯤 뒤면 ${koDuration(p.targetMin)}이에요. 다음 쉴 곳에서 쉬어 가요."
+            Lang.EN -> if (short) "Almost ${enDuration(p.targetMin)}. Plan a stop."
+            else "About $left minute${if (left == 1) "" else "s"} to ${enDuration(p.targetMin)}. Let's rest at the next stop."
+        }
     }
 
     fun main(c: SayCtx, p: RestPolicy, ask: Boolean = false): String {

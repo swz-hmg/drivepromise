@@ -499,6 +499,7 @@ private fun s72() {
     ok(b[0].t in 6_600_000L..6_606_000L && b[1].t in 7_200_000L..7_206_000L, "예고 1:50·본 알림 2:00: ${b.map { it.t / 1000 }}")
     eq(sb.summary!!.statuses["rest"], PromiseStatus.MISSED, "쉬기 못 지킴")
     eq(sb.summary!!.statuses.filterKeys { it != "rest" }.values.toSet(), setOf(PromiseStatus.KEPT), "나머지 지킴 ${sb.summary!!.statuses}")
+    eq(b[0].text, "10분쯤 뒤면 두 시간이에요. 다음 쉴 곳에서 쉬어 가요.", "예고 문장(1.3.3: 남은 분을 말하는 순간 값으로 — 시연은 제때라 그대로)")
     eq(b[1].text, "두 시간째예요. 약속대로 쉬어 가요.", "STT 없으면 질문 아닌 본 알림(도착까지 18분 — ‘곧 도착’ 아님)")
     eq(sb.summary!!.lines, listOf("오늘은 두 시간 13분을 쉬지 않고 운전하셨어요. 다음엔 한 시간 50분쯤 쉬어 가요.", "약속 5개 중 4개를 지켰어요. 다음엔 2시간마다 쉬기도 같이 지켜요."), "두 시간 쉬기 요약")
     // 3) 약속 구역 경계: 예고 → 밖 → 돌아옴, 주행 끝은 못 지킴

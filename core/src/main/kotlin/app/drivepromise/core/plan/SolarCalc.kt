@@ -22,6 +22,18 @@ object SolarCalc {
 
     data class SunTimes(val sunriseMs: Long?, val sunsetMs: Long?, val civilDawnMs: Long?, val civilDuskMs: Long?)
 
+    /**
+     * 1.3.3(P2, B24): 이 좌표로 이 시간대의 일몰을 계산해도 되는가 — (0,0) 같은 빈 좌표, 시간대와 경도가 크게 어긋난 좌표(에뮬레이터 기본 위치 마운틴뷰 + Asia/Seoul)는 아님.
+     * 기준: 경도가 시간대 오프셋×15°에서 30° 안(서울 127° vs 135° = 8°).
+     */
+    fun plausible(epochMs: Long, lat: Double, lon: Double, zone: ZoneId): Boolean {
+        if (lat.isNaN() || lon.isNaN() || (kotlin.math.abs(lat) < 0.5 && kotlin.math.abs(lon) < 0.5)) return false
+        val offH = zone.rules.getOffset(Instant.ofEpochMilli(epochMs)).totalSeconds / 3600.0
+        var diff = kotlin.math.abs(lon - offH * 15.0) % 360.0
+        if (diff > 180.0) diff = 360.0 - diff
+        return diff <= 30.0
+    }
+
     /** 그 시각이 속한 ‘그 지역 날짜’의 일출·일몰 */
     fun at(epochMs: Long, lat: Double, lon: Double, zone: ZoneId): SunTimes {
         val date = Instant.ofEpochMilli(epochMs).atZone(zone).toLocalDate()

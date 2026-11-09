@@ -132,6 +132,11 @@ class PromiseEngine(
         }
     }
 
+    /** 1.3.3(P2, B22): 도착 소식 뒤에도 계속 달려 도착이 아니었다고 볼 때(경유지·목적지 옆 통과) — 도착 판정을 지움 */
+    fun clearArrival() {
+        arrivedAt = null
+    }
+
     /** 10 Hz — World.fix·vehicle·etaMs·drivingMs로 약속 상태를 판정 */
     fun tick(w: World) {
         if (tripEnded) return
@@ -179,6 +184,7 @@ class PromiseEngine(
     // ---------------------------------------------------------------- 해 지기 전 귀가
     private fun sunset(w: World): Long? {
         val f = w.fix ?: lastFix ?: return null
+        if (!SolarCalc.plausible(w.tMillis, f.lat, f.lon, policy.zone)) return null   // 1.3.3(B24): 시간대와 맞지 않는 좌표 → 판단 보류
         return SolarCalc.at(w.tMillis, f.lat, f.lon, policy.zone).sunsetMs
     }
 
@@ -187,6 +193,7 @@ class PromiseEngine(
     /** 1.3.2(P1-1): 그 시각이 어두운가 — 그 지역 날짜의 일몰 뒤이거나 일출 전. 해가 지지 않는 곳(일몰 없음)은 null */
     private fun darkAt(t: Long, w: World): Boolean? {
         val f = w.fix ?: lastFix ?: return null
+        if (!SolarCalc.plausible(t, f.lat, f.lon, policy.zone)) return null   // 1.3.3(B24)
         val st = SolarCalc.at(t, f.lat, f.lon, policy.zone)
         val ss = st.sunsetMs ?: return null
         return t > ss || (st.sunriseMs?.let { t < it } ?: false)

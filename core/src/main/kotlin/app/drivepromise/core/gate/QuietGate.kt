@@ -64,6 +64,9 @@ class QuietGate(private val p: GatePolicy = GatePolicy()) : QuietWindows {
     private var tbtTurn = TurnType.OTHER
     private var turnCounted = false   // 지금 TBT의 회전점 통과를 이미 셌는가
     private var lastTurnAt: Long? = null
+    /** 1.3.3(P2, B17): TBT 뒤 실제로 달린 거리(속도 적분) — ‘현재 속도 × 지난 시간’은 신호 대기 뒤 출발하면 회전을 지난 것으로 봄 */
+    private var movedM = 0.0
+    private var movedAt: Long? = null
 
     // 정지·급제동
     private var stoppedSince: Long? = null
@@ -96,6 +99,10 @@ class QuietGate(private val p: GatePolicy = GatePolicy()) : QuietWindows {
             }
         }
         if (speedHist.isEmpty() || speedHist.last().first < now) speedHist.addLast(now to s)
+        // 1.3.3(B17): 앞 속도로 지난 구간을 적분(한 번에 최대 MAX_INTEGRATE_MS — 시계 점프 방지)
+        val ma = movedAt
+        if (tbtAt != null && ma != null && now > ma) movedM += speedMps * (minOf(now - ma, MAX_INTEGRATE_MS) / 1000.0)
+        movedAt = now
         speedMps = s
         if (v.driving && v.stopped) {
             if (stoppedSince == null) stoppedSince = now
@@ -105,7 +112,7 @@ class QuietGate(private val p: GatePolicy = GatePolicy()) : QuietWindows {
         // 회전점 통과 판단(거리 기준)
         val ta = tbtAt
         if (ta != null) {
-            if (now - ta > p.tbtStaleMs) {
+            if (now - ta > p.tbtStaleMs || ta - now > FUTURE_TOL_MS) {   // 1.3.3(B23): 시계가 뒤로 가 TBT 시각이 미래면 접음
                 tbtAt = null
             } else if (!turnCounted && distNow() <= p.turnReachedM) {
                 markTurnPassed(now)
@@ -129,6 +136,7 @@ class QuietGate(private val p: GatePolicy = GatePolicy()) : QuietWindows {
         }
         tbtAt = e.tMillis
         tbtDistM = e.distM.toDouble()
+        movedM = 0.0   // 1.3.3(B17): 새 TBT 거리부터 다시 적분
         tbtTurn = e.turn
         turnCounted = false
         if (e.turn == TurnType.DESTINATION && e.distM <= p.turnReachedM) tbtAt = null
@@ -141,8 +149,10 @@ class QuietGate(private val p: GatePolicy = GatePolicy()) : QuietWindows {
 
     private fun distNow(at: Long = nowMs): Double {
         val ta = tbtAt ?: return Double.MAX_VALUE
-        val moved = speedMps * ((at - ta).coerceAtLeast(0) / 1000.0)
-        return (tbtDistM - moved).coerceAtLeast(0.0)
+        // 1.3.3(B17): 적분한 거리 + 마지막 갱신(또는 TBT) 뒤 지금 속도로 간 거리
+        val from = maxOf(movedAt ?: ta, ta)
+        val extra = speedMps * ((at - from).coerceIn(0, MAX_INTEGRATE_MS) / 1000.0)
+        return (tbtDistM - movedM - extra).coerceAtLeast(0.0)
     }
 
     private fun preMsFor(turn: TurnType) = if (turn == TurnType.LEFT || turn == TurnType.U_TURN) p.preLeftMs else p.preMs
@@ -151,9 +161,9 @@ class QuietGate(private val p: GatePolicy = GatePolicy()) : QuietWindows {
     fun quiet(now: Long): Boolean {
         if (turnSignal != Turn.OFF && !parked) return true   // 1.3.1(P0-4): 세워 둔 채 비상등을 켜도 요약·계획은 말함
         val hb = hardBrakeAt
-        if (hb != null && now - hb < p.hardBrakeHoldMs) return true
+        if (hb != null && now - hb in 0 until p.hardBrakeHoldMs) return true   // 1.3.3(B23): 시계가 뒤로 가 미래가 된 기록은 무시
         val lt = lastTurnAt
-        if (lt != null && now - lt < p.postMs) return true
+        if (lt != null && now - lt in 0 until p.postMs) return true
         val tt = timeToTurnMs
         if (tt != null && tt < preMsFor(tbtTurn)) return true
         return false
@@ -185,5 +195,8 @@ class QuietGate(private val p: GatePolicy = GatePolicy()) : QuietWindows {
     private companion object {
         const val HIST_MS = 1_500L
         const val MIN_DT_S = 0.3
+        /** 1.3.3: 적분 한 구간 상한 · 미래 시각 허용 오차 */
+        const val MAX_INTEGRATE_MS = 10_000L   // 60배속 리플레이 한 틱(6초)보다 크게
+        const val FUTURE_TOL_MS = 5_000L
     }
 }

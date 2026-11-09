@@ -13,6 +13,13 @@ import app.drivepromise.store.Prefs
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(ctx: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
+        // 1.3.3(P2): 헤드리스 시스템 사용자(0)에서는 시작하지 않음 — 화면이 없는 사용자라 말·위치 권한이 없고, 운전자 사용자(10)가 따로 받음
+        try {
+            val um = ctx.getSystemService(android.os.UserManager::class.java)
+            if (android.os.Build.VERSION.SDK_INT >= 31 && android.os.UserManager.isHeadlessSystemUserMode() && um?.isSystemUser == true) {
+                L.log("boot", "skip" to "headless_system_user"); return
+            }
+        } catch (_: Throwable) {}
         val on = Prefs(ctx).autoStart
         L.log("boot", "autoStart" to on)
         if (!on) return

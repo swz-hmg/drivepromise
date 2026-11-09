@@ -102,6 +102,9 @@ class DrivePromiseService : Service() {
     private var fgsFailed = false
     private var lastRetry = 0L
     private var adapterRetries = 0
+    // 1.3.3(P2, B11·B23): 벽시계 점프 감지(단조 시계 elapsedRealtime과 비교) — 실차 세션에 알림
+    private var lastWall = 0L
+    private var lastMono = 0L
     private var carUx: PleosCarUx? = null
     private var stt: PleosStt? = null
     private var renew: Runnable? = null                  // 1.3.0: 실차 세션 끝 → 새 세션
@@ -328,6 +331,14 @@ class DrivePromiseService : Service() {
                     "est" to step.estMs, "chars" to step.text.length, "text" to step.text)
             }
 
+            override fun onArrivalCleared(nowMs: Long) {
+                L.log("arrival_cleared", "now" to nowMs)   // 1.3.3(B22): 도착 소식 뒤에도 계속 달림 → 도착을 지우고 주행을 이어 감
+            }
+
+            override fun onFinalParkRestUndone(nowMs: Long, drivingMs: Long) {
+                L.log("rest_undo_final_park", "drivingMin" to drivingMs / 60_000)   // 1.3.3(B21): 목적지 정차는 이번 주행의 쉼이 아님
+            }
+
             override fun onWatchdog(key: String, nowMs: Long) {
                 L.log("tts_watchdog", "key" to key)   // 1.3.0(C14): 완료 소식 없이 너무 오래 — 멈추고 2초 뒤 다시
             }
@@ -407,6 +418,13 @@ class DrivePromiseService : Service() {
 
     private fun step() {
         val s = session ?: return
+        val wall = System.currentTimeMillis()
+        val mono = android.os.SystemClock.elapsedRealtime()
+        if (lastMono > 0) {
+            val jump = (wall - lastWall) - (mono - lastMono)
+            if (abs(jump) > CLOCK_JUMP_MS && mode == Mode.REAL) { s.onClockJump(jump); L.log("clock_jump", "deltaMs" to jump) }
+        }
+        lastWall = wall; lastMono = mono
         voiceStep(s)
         val p = replay
         if (mode == Mode.REPLAY && p != null) {
@@ -745,6 +763,8 @@ class DrivePromiseService : Service() {
         /** 1.3.2(P1-10): 차량·내비 연결 다시 시도 간격·최대 횟수 */
         const val ADAPTER_RETRY_MS = 30_000L
         const val ADAPTER_RETRY_MAX = 10
+        /** 1.3.3(P2): 벽시계가 단조 시계보다 이만큼 넘게 어긋나면 점프로 봄 */
+        const val CLOCK_JUMP_MS = 5_000L
 
         fun start(ctx: Context, src: String = "app") {
             ctx.startForegroundService(Intent(ctx, DrivePromiseService::class.java).putExtra("src", src))

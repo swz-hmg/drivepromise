@@ -14,6 +14,7 @@ import app.drivepromise.core.model.NaviEvent
 import app.drivepromise.core.model.Promise
 import app.drivepromise.core.model.PromiseStatus
 import app.drivepromise.core.model.VehicleSnapshot
+import app.drivepromise.core.plan.SolarCalc
 import app.drivepromise.core.plan.PreTripPlanner
 import app.drivepromise.core.replay.ReplayPlayer
 import app.drivepromise.core.rest.Phrases
@@ -101,6 +102,10 @@ class TripSession(
         fun onEvent(e: LedgerEvent) {}
         /** 1.3.0(C14): 감시 타이머가 완료 소식 없는 말을 멈춤 */
         fun onWatchdog(key: String, nowMs: Long) {}
+        /** 1.3.3(B22): 도착 소식 뒤에도 계속 달려 도착을 지움 */
+        fun onArrivalCleared(nowMs: Long) {}
+        /** 1.3.3(B21): 마지막 정차 안의 쉼을 이번 주행 판정에서 되돌림 */
+        fun onFinalParkRestUndone(nowMs: Long, drivingMs: Long) {}
     }
 
     /** 주행 끝 요약 — 정차 화면·말·기록 */
@@ -283,6 +288,11 @@ class TripSession(
                 when {
                     v?.ignitionOn == false -> end("ignition_off")
                     arr != null && parked -> end("arrived")
+                    // 1.3.3(P2, B22): 도착 소식 5분 뒤에도 움직이는 중이면 도착이 아니었던 것(경유지·옆 통과) — 도착을 지우고 주행을 이어 감.
+                    // 달리는 중에 주행을 끝내면 요약은 세운 뒤에만 말하므로 새 세션에 밀려 사라지던 것
+                    arr != null && now - arr >= policy.endAfterArrivedMs && v?.driving == true && v.stopped != true -> {
+                        arrivedAt = null; engine.clearArrival(); listener.onArrivalCleared(now)
+                    }
                     arr != null && now - arr >= policy.endAfterArrivedMs -> end("arrived_timeout")
                     ps != null && now - ps >= policy.endAfterParkedMs -> end("parked_long")
                 }
@@ -291,10 +301,23 @@ class TripSession(
         }
     }
 
+    /**
+     * 1.3.3(P2, B11·B23): 앱이 벽시계가 뛴 것을 알림(단조 시계와 비교, 실차 세션만) — 쉬기 운전 시간에 넣지 않고, 정차·도착·출발 시각을 같이 옮김.
+     * 뒤로 뛴 경우 침묵 구간·내비 간격의 ‘미래’ 기록은 각 부품이 버림
+     */
+    fun onClockJump(deltaMs: Long) {
+        rest.onClockJump(deltaMs)
+        parkedSince = parkedSince?.plus(deltaMs)
+        arrivedAt = arrivedAt?.plus(deltaMs)
+        tripStartMs = tripStartMs?.plus(deltaMs)
+    }
+
     /** 주행 끝 — 약속 판정을 닫고 요약을 만듦(한 번만). 요약 문장은 세워 둔 동안 말함 */
     fun end(reason: String = "manual"): Summary {
         summary?.let { return it }
         val now = clock.nowMs()
+        // 1.3.3(P2, B21): 오래 세워 둬서 끝나면, 그 마지막 정차 안에서 생긴 쉼은 이번 주행 판정에 넣지 않음(목적지에 세운 것)
+        if (reason == "parked_long" && rest.undoFinalParkRest()) listener.onFinalParkRestUndone(now, rest.drivingMs)
         val w = world(now)
         val st = engine.endTrip(w)
         val restLine = rest.endTrip(now, lang)
@@ -328,8 +351,10 @@ class TripSession(
     ): AutoCloseable {
         val now = clock.nowMs()
         val fix = lastFix
-        val lat = fix?.lat ?: policy.fallbackLat
-        val lon = fix?.lon ?: policy.fallbackLon
+        // 1.3.3(B24): 시간대와 맞지 않는 좌표(에뮬레이터 기본 위치 등)면 기본 위치(서울시청)로 일몰 계산
+        val okFix = fix?.takeIf { SolarCalc.plausible(now, it.lat, it.lon, policy.engine.zone) }
+        val lat = okFix?.lat ?: policy.fallbackLat
+        val lon = okFix?.lon ?: policy.fallbackLon
         return route.planRoutes(dest, options, Sink { plans ->
             val p = PreTripPlanner.plan(PreTripPlanner.Input(now, lat, lon, plans, promises, policy.engine.zone, lang, departAtMs ?: now))
             plan = p

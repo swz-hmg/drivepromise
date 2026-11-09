@@ -70,8 +70,19 @@ class VoiceArbiter(
         return yieldIfSpeaking("focus")
     }
 
+    /** 1.3.3(P2, B23): 시계가 뒤로 가서 ‘미래’가 된 기록은 버림 — 1시간 동안 말을 막지 않게 */
+    private fun dropFuture(nowMs: Long) {
+        val lim = nowMs + FUTURE_TOL_MS
+        if ((navEndedAt ?: Long.MIN_VALUE) > lim) navEndedAt = null
+        if ((focusLostAt ?: Long.MIN_VALUE) > lim) focusLostAt = null
+        if ((regainAt ?: Long.MIN_VALUE) > lim) regainAt = null
+        if ((navIncreasedAt ?: Long.MIN_VALUE) > lim) navIncreasedAt = null
+        if ((navChangedAt ?: Long.MIN_VALUE) > lim) navChangedAt = null
+    }
+
     /** 지금 새로 말을 시작해도 되는가 */
     fun canStart(nowMs: Long): Boolean {
+        dropFuture(nowMs)
         if (navPlayers > 0) {
             if (!staleAfterGain(nowMs) && !staleIdle(nowMs)) return false
             if (!staleNoted) { staleNoted = true; staleCount++ }
@@ -121,5 +132,8 @@ class VoiceArbiter(
         val id = speakingId ?: return Action.None
         speakingId = null
         return Action.Yield(id, stopBudgetMs, via)
+    }
+    private companion object {
+        const val FUTURE_TOL_MS = 5_000L
     }
 }
