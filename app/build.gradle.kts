@@ -32,8 +32,8 @@ android {
         applicationId = "app.drivepromise"
         minSdk = 33
         targetSdk = 35
-        versionCode = 7
-        versionName = "1.3.0"   // 공모전 1차 제출본(11/15) — 11/7 외부 검토 2건 반영(일몰 문장·모르면 판단 보류·침묵 창·말 길이·다음 주행·서비스 보호·조사 허용) + PT 과제(약속 정하기 화면·부팅 자동 시작·고속도로 갈림길 예고)
+        versionCode = 8
+        versionName = "1.3.1"   // 공모전 1차 제출본(11/14) — 1.3.0(11/7 외부 검토 반영 + PT 과제) + 11/9 종합 점검 P0(비 제한속도 0 · S100 회귀 · 고속도로 문장 한 번 · 정차 비상등 · 쉬기 이름 · 조사 · 권한 요청 · 세션 재시작 조건 · 내비 개인 장소 기록 안 함 · 설정 처음 값)
     }
 
     signingConfigs {

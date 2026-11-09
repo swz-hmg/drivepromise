@@ -188,6 +188,7 @@ class DrivePromiseService : Service() {
                     "zone_radius" -> intent.getStringExtra("value")?.toIntOrNull()?.let { setZoneRadius(it) }
                     "zone_here" -> setZoneHere()
                     "autostart" -> setAutoStart(intent.getStringExtra("value") != "off")
+                    "defaults" -> resetSettings()   // 1.3.1(P0-11): 설정 처음 값으로
                 }
             } catch (e: Throwable) {
                 L.log("cmd_error", "cmd" to cmd, "err" to e)
@@ -449,6 +450,18 @@ class DrivePromiseService : Service() {
         return true
     }
     fun setAutoStart(on: Boolean) { prefs.autoStart = on; L.log("settings", "autoStart" to on) }
+    /** 1.3.1(P0-11): 설정을 처음 값으로 — 약속 5개 켬 · 쉬기 120분 · 여유 30분 · 구역 서울시청 10 km · 질문 뒤 듣기 켬 · 한국어 · 주행 화면 켬 · DO 인정 가정 켬 · 자동 시작 켬 */
+    fun resetSettings() {
+        prefs.resetSettings()
+        session?.lang = prefs.lang
+        voice?.setLang(prefs.lang)
+        stt?.setLang(prefs.lang)
+        setScreenWhileDriving(ScreenWhileDriving.ON)
+        setAssumeDo(true)
+        setListenAfterQuestion(true)
+        L.log("settings", "reset" to "defaults", "lang" to prefs.lang)
+        applySettings()
+    }
     /** 세워 둔 동안(또는 주행이 끝난 뒤)만 바로 반영 — 주행 중 바꾸면 다음 주행부터 */
     private fun applySettings() {
         val ph = session?.phase
@@ -630,6 +643,15 @@ class DrivePromiseService : Service() {
     /** 권한을 받은 뒤 — STT가 실패 상태면 다시 초기화 */
     fun onPermissionsChanged() {
         stt?.retry()
+        voice?.reinitIfNotReady()        // 1.3.1(P0-7): TTS 권한을 나중에 허용해도 다시 시작 없이 말함
+        vehicleSrc?.retryMissingProps()  // 1.3.1(P0-7): 차속 권한을 나중에 허용하면 속도만 다시 등록
+    }
+
+    /** 1.3.1(P0-8): 위치 권한이 새로 허용됨 — 세워 둔 실차 세션(또는 세션 없음)일 때만 새 세션으로 위치 원천을 다시 붙임 */
+    fun onLocationGranted() {
+        val ph = session?.phase
+        if (mode == Mode.REAL && (ph == null || ph == TripSession.Phase.PARKED)) startReal()
+        else L.log("perm_loc_later", "mode" to mode, "phase" to ph)   // 주행·주행 끝·리플레이는 그대로 — 다음 세션이 새 권한으로 시작
     }
 
     fun uxText(): String = "requiresDO=${carUx?.requiresDo} active=${carUx?.activeRestrictions} maxLen=${carUx?.maxStringLength}"

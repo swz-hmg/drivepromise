@@ -61,7 +61,7 @@ object PromisePhrases {
 
     /** 1.3.0(PT 과제 ADV-01): 고속도로로 들어가는 갈림길 예고 — 내비 TBT 설명(‘판교IC 방면’ 등)으로 */
     fun highwayAhead(lang: Lang, toward: String, short: Boolean): String = when (lang) {
-        Lang.KO -> if (short) "앞이 고속도로 방면이에요." else "앞 갈림길은 ${toward.trim()}이에요. 약속대로 일반도로로 가요."
+        Lang.KO -> if (short) "앞이 고속도로 방면이에요." else "앞 갈림길은 ${toward.trim()}${Josa.copula(toward.trim())}. 약속대로 일반도로로 가요."
         Lang.EN -> if (short) "Highway ramp ahead." else "The next turn heads to ${toward.trim()}. Stay on local roads as promised."
     }
 
@@ -72,7 +72,7 @@ object PromisePhrases {
     }
 
     fun rainFast(lang: Lang, speedKph: Int, targetKph: Int, short: Boolean): String = when (lang) {
-        Lang.KO -> if (short) "빗길이에요. ${targetKph}까지 줄여요." else "빗길에 ${speedKph}예요. ${targetKph} 아래로 줄여요."
+        Lang.KO -> if (short) "빗길이에요. ${targetKph}까지 줄여요." else "빗길에 ${speedKph}${Josa.copula(speedKph.toString())}. ${targetKph} 아래로 줄여요."
         Lang.EN -> if (short) "Wet road — slow to $targetKph." else "$speedKph on a wet road. Ease down below $targetKph."
     }
 

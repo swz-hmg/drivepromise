@@ -2,6 +2,7 @@ package app.drivepromise.core.plan
 
 import app.drivepromise.core.model.Promise
 import app.drivepromise.core.model.PromiseStatus
+import app.drivepromise.core.scene.Josa
 import app.drivepromise.core.scene.PromisePhrases
 import app.drivepromise.core.source.RouteOption
 import app.drivepromise.core.source.RoutePlan
@@ -98,7 +99,7 @@ object PreTripPlanner {
             PromiseStatus.UNKNOWN -> lines += if (i.lang == Lang.KO) "고속도로가 있는지는 알 수 없어요." else "Highway use is unknown for this route."
             else -> lines += if (i.lang == Lang.KO) "고속도로 없이 가요." else "No highway on this route."
         }
-        if (choice.needsRest) lines += if (i.lang == Lang.KO) "${rest!!.everyMin / 60}시간 넘게 걸려요. 중간에 한 번 쉬어 가요." else "Over ${rest!!.everyMin / 60} hours — plan one rest stop."
+        if (choice.needsRest) lines += if (i.lang == Lang.KO) "${Josa.koEvery(rest!!.everyMin)} 넘게 걸려요. 중간에 한 번 쉬어 가요." else "Over ${Josa.enSpan(rest!!.everyMin)} — plan one rest stop."
         return Plan(choice.option, cands, sunset, departBy, lines)
     }
 
@@ -119,7 +120,7 @@ object PreTripPlanner {
 
     private fun darkOk(lang: Lang, arr: Long, ss: Long, z: ZoneId) =
         if (lang == Lang.KO) "${PromisePhrases.koClock(arr, z)} 도착, 해는 ${PromisePhrases.koClock(ss, z)}에 져요. 약속대로 해 지기 전이에요."
-        else "Arrive ${PromisePhrases.enClock(arr, z)}; sunset ${PromisePhrases.enClock(ss, z)}. Before dark, as promised."
+        else "Arrive ${PromisePhrases.enClock(arr, z)}; sunset ${PromisePhrases.enClock(ss, z)} — before dark, as promised."   // 1.3.1: ‘p.m..’ 마침표 겹침
 
     private fun darkTight(lang: Lang, arr: Long, ss: Long, z: ZoneId) =
         if (lang == Lang.KO) "${PromisePhrases.koClock(arr, z)} 도착이면 해 지기 직전이에요(일몰 ${PromisePhrases.koClock(ss, z)}). 바로 출발해요."

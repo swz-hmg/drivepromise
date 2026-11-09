@@ -82,8 +82,10 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(buildUi())
-        requestPermissions(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, PleosFusedLocationSource.PERMISSION, Manifest.permission.POST_NOTIFICATIONS,
-            PleosStt.PERMISSION, Manifest.permission.RECORD_AUDIO), 1)
+        // 1.3.1(P0-7·P0-8): 아직 허용되지 않은 권한만 요청 — Pleos TTS·차속 포함(‑g 없이 설치해도 말하도록).
+        // 모두 허용돼 있으면 요청하지 않으므로, 화면이 다시 만들어져도(낮·밤 전환 등) 권한 결과로 세션이 다시 시작되지 않음
+        val missing = WANTED_PERMISSIONS.filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+        if (missing.isNotEmpty()) requestPermissions(missing.toTypedArray(), 1)
         DrivePromiseService.start(this)
         L.log("act", "s" to "create")
     }
@@ -331,11 +333,16 @@ class MainActivity : Activity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         val granted = permissions.indices.filter { grantResults.getOrNull(it) == PackageManager.PERMISSION_GRANTED }.map { permissions[it].substringAfterLast('.') }
         L.log("perm", "granted" to granted.joinToString("+"))
-        if (granted.contains("ACCESS_FINE_LOCATION") || granted.contains("FUSED_LOCATION")) svc?.startReal()   // 위치 원천(Pleos FusedLocation·대체)을 다시 붙임
-        if (granted.contains("STT_SERVICE") || granted.contains("RECORD_AUDIO")) svc?.onPermissionsChanged()   // 음성 인식이 권한 때문에 실패했으면 다시
+        // 1.3.1(P0-8): 위치가 새로 허용됐을 때만, 그리고 서비스가 세워 둔 실차 세션일 때만 위치 원천을 다시 붙임(주행·리플레이·주행 끝은 건드리지 않음)
+        if (granted.contains("ACCESS_FINE_LOCATION") || granted.contains("FUSED_LOCATION")) svc?.onLocationGranted()
+        // 음성 인식·음성 안내·차속이 권한 때문에 실패했으면 다시(1.3.1 P0-7: TTS·차속 추가)
+        if (granted.any { it in setOf("STT_SERVICE", "RECORD_AUDIO", "TTS_SERVICE", "CAR_SPEED") }) svc?.onPermissionsChanged()
     }
 
     companion object {
+        /** 1.3.1(P0-7): 앱이 직접 요청하는 런타임 권한 — README의 `adb install -g`·`pm grant` 없이도 동작하도록 */
+        val WANTED_PERMISSIONS = arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, PleosFusedLocationSource.PERMISSION, Manifest.permission.POST_NOTIFICATIONS,
+            PleosStt.PERMISSION, Manifest.permission.RECORD_AUDIO, "pleos.car.permission.TTS_SERVICE", "android.car.permission.CAR_SPEED")
         val PROMISE_IDS = app.drivepromise.store.Prefs.PROMISE_IDS
         val PROMISE_KO = mapOf("dark" to "해 지기 전 귀가", "highway" to "고속도로 대신", "rain" to "비 오는 날 조심", "rest" to "쉬기", "zone" to "약속 구역")
         val PROMISE_EN = mapOf("dark" to "Home before dark", "highway" to "No highways", "rain" to "Care in rain", "rest" to "Rest", "zone" to "Stay in zone")

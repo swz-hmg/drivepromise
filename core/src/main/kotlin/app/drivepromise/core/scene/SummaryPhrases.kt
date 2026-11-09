@@ -10,7 +10,7 @@ object SummaryPhrases {
         is Promise.HomeBeforeDark -> if (lang == Lang.KO) "해 지기 전 귀가" else "home before dark"
         is Promise.AvoidHighway -> if (lang == Lang.KO) "고속도로 대신" else "no highways"
         is Promise.RainCare -> if (lang == Lang.KO) "비 오는 날 조심" else "care in the rain"
-        is Promise.RestEvery -> if (lang == Lang.KO) "${p.everyMin / 60}시간마다 쉬기" else "rest every ${p.everyMin / 60} hours"
+        is Promise.RestEvery -> if (lang == Lang.KO) "${Josa.koEvery(p.everyMin)}마다 쉬기" else "rest every ${Josa.enEvery(p.everyMin)}"   // 1.3.1(P0-5): 90분 → 1시간 30분
         is Promise.StayInZone -> if (lang == Lang.KO) "약속 구역" else "stay in zone"
     }
 

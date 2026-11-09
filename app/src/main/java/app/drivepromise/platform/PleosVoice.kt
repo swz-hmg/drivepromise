@@ -72,6 +72,16 @@ class PleosVoice(
         ready = false
     }
 
+    /** 1.3.1(P0-7): 초기화가 실패했던 TTS(권한 없음 등)를 다시 — 이미 준비됐으면 아무것도 안 함 */
+    fun reinitIfNotReady() {
+        if (ready) return
+        try { ttsEv?.let { tts?.removeEventListener(it) } } catch (_: Throwable) {}
+        try { tts?.release() } catch (_: Throwable) {}
+        tts = null
+        L.log("tts_reinit")
+        initTts()
+    }
+
     fun setLang(lang: Lang) {
         try { tts?.setLocale(if (lang == Lang.KO) Locale.KOREA else Locale.US) } catch (e: Throwable) { L.log("tts_locale_error", "err" to e) }
     }

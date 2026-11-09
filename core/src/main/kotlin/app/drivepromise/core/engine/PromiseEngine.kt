@@ -81,6 +81,7 @@ class PromiseEngine(
     private var darkWarned = false
     /** 1.3.0d: 이번 세션에서 차가 한 번이라도 움직였는가(기어 R·N·D 또는 주행 시간 > 0) */
     private var movedEver = false
+    private var drivingMsAtStart: Long? = null   // 1.3.1(P0-2): 세션 첫 틱의 운전 시간(복원값)
     private var darkSpokeNight = false
     private var onHighway = false
     private var highwayEver = false
@@ -123,7 +124,8 @@ class PromiseEngine(
     fun tick(w: World) {
         if (tripEnded) return
         w.fix?.let { lastFix = it }
-        if (w.vehicle?.driving == true || w.drivingMs > 0) movedEver = true
+        if (drivingMsAtStart == null) drivingMsAtStart = w.drivingMs
+        if (w.vehicle?.driving == true || w.drivingMs > (drivingMsAtStart ?: 0L)) movedEver = true   // 1.3.1(P0-2): 복원된 운전 시간만으로는 ‘움직임’이 아님(S100 회귀)
         for (p in promises) {
             val s = when (p) {
                 is Promise.HomeBeforeDark -> dark(p, w)
@@ -210,7 +212,7 @@ class PromiseEngine(
         val byRoad = road?.let { r -> policy.highwayRoadKeywords.any { r.contains(it, ignoreCase = true) } } ?: false
         val now = byLimit || byRoad
         if (!now) aheadCheck(p, w)
-        if (now && !onHighway) {
+        if (now && !onHighway && !highwayEver) {   // 1.3.1(P0-3): 한 주행에 한 번 — 제한속도 정보가 깜박여도 다시 말하지 않음
             highwayEver = true
             submit(p.id, "on", w.tMillis, Priority.PROMISE, 4_000, 2_000, Validity.WHILE_STATE, deadline = w.tMillis,
                 stillValid = { onHighway }, render = { c -> PromisePhrases.highwayEntered(c.world.lang, c.short) })
@@ -252,7 +254,7 @@ class PromiseEngine(
         }
         if (raining && wiperOffSince != null && now - wiperOffSince!! >= policy.rainOffMs) raining = false
         if (!raining) return if (v.wiper == Wiper.UNKNOWN && wiperOnSince == null) PromiseStatus.UNKNOWN else PromiseStatus.ON_TRACK
-        val limit = speedLimitKph ?: policy.rainDefaultLimitKph
+        val limit = speedLimitKph?.takeIf { it > 0 } ?: policy.rainDefaultLimitKph   // 1.3.1(P0-1): 0 = 이 도로 정보 없음 → 기본값(‘0 아래로 줄여요’ 방지)
         val target = (limit * policy.rainSpeedFactor).toInt()
         val kph = ((v.speedMps ?: 0f) * 3.6f).toInt()
         val fast = kph > target

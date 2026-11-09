@@ -93,9 +93,7 @@ class PleosVehicleSource(private val ctx: Context, private val main: Handler) : 
             reg("gear", id("GEAR_SELECTION", VehiclePropertyIds.GEAR_SELECTION), CarPropertyManager.SENSOR_RATE_ONCHANGE) { v, t ->
                 VehicleDelta(t, gear = gearOf(v as? Int))
             }
-            reg("speed", id("PERF_VEHICLE_SPEED", VehiclePropertyIds.PERF_VEHICLE_SPEED), CarPropertyManager.SENSOR_RATE_FAST) { v, t ->
-                VehicleDelta(t, speedMps = (v as? Number)?.toFloat()?.let { kotlin.math.abs(it) })
-            }
+            regSpeed()
             reg("turn", id("TURN_SIGNAL_STATE", VehiclePropertyIds.TURN_SIGNAL_STATE), CarPropertyManager.SENSOR_RATE_ONCHANGE) { v, t ->
                 VehicleDelta(t, turnSignal = turnOf(v as? Int))
             }
@@ -119,6 +117,15 @@ class PleosVehicleSource(private val ctx: Context, private val main: Handler) : 
 
     private fun id(name: String, fallback: Int): Int =
         try { VehiclePropertyIds::class.java.getField(name).getInt(null) } catch (_: Throwable) { fallback }
+
+    private fun regSpeed() = reg("speed", id("PERF_VEHICLE_SPEED", VehiclePropertyIds.PERF_VEHICLE_SPEED), CarPropertyManager.SENSOR_RATE_FAST) { v, t ->
+        VehicleDelta(t, speedMps = (v as? Number)?.toFloat()?.let { kotlin.math.abs(it) })
+    }
+
+    /** 1.3.1(P0-7): 차속 권한(CAR_SPEED)을 나중에 허용했을 때 속도만 다시 등록 */
+    fun retryMissingProps() {
+        if (props != null && "aaos:speed" !in okSources) regSpeed()
+    }
 
     private fun reg(name: String, propId: Int, rate: Float, map: (Any?, Long) -> VehicleDelta?) {
         val cb = object : CarPropertyManager.CarPropertyEventCallback {

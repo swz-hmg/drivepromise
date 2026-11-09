@@ -149,7 +149,7 @@ class QuietGate(private val p: GatePolicy = GatePolicy()) : QuietWindows {
 
     /** 지금 이 순간 침묵인가(회전 앞·뒤, 방향지시등, 급제동) */
     fun quiet(now: Long): Boolean {
-        if (turnSignal != Turn.OFF) return true
+        if (turnSignal != Turn.OFF && !parked) return true   // 1.3.1(P0-4): 세워 둔 채 비상등을 켜도 요약·계획은 말함
         val hb = hardBrakeAt
         if (hb != null && now - hb < p.hardBrakeHoldMs) return true
         val lt = lastTurnAt

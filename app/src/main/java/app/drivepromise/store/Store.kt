@@ -116,6 +116,14 @@ class Prefs(ctx: Context) {
         return list
     }
 
+    /** 1.3.1(P0-11): 약속·화면·음성 설정을 처음 값으로(쉬기 기록은 그대로) — 심사·시연 전 한 번 */
+    fun resetSettings() {
+        sp.edit().remove("promises.on").remove("rest.everyMin").remove("dark.marginMin")
+            .remove("zone.lat").remove("zone.lon").remove("zone.radiusM")
+            .remove("voice.afterQuestion").remove("autoStart").remove("screen.driving").remove("screen.assumeDo").remove("lang")
+            .apply()
+    }
+
     fun setPromiseOn(id: String, on: Boolean) {
         val cur = (sp.getStringSet("promises.on", null) ?: PROMISE_IDS.toSet()).toMutableSet()
         if (on) cur += id else cur -= id

@@ -193,7 +193,7 @@ private fun s49() {
     ok(!r.eng.isRaining, "59초는 아직")
     r.run(t0 + 59_100, t0 + 95_000)
     ok(r.eng.isRaining, "60초면 비")
-    eq(r.sim.log.map { it.text }, listOf("비가 와요. 약속대로 평소보다 천천히, 앞차와 거리를 두세요.", "빗길에 70예요. 48 아래로 줄여요."), "비 시작 + 30초 뒤 감속(60의 80% = 48)")
+    eq(r.sim.log.map { it.text }, listOf("비가 와요. 약속대로 평소보다 천천히, 앞차와 거리를 두세요.", "빗길에 70이에요. 48 아래로 줄여요."), "비 시작 + 30초 뒤 감속(60의 80% = 48)")
     eq(r.status("rain"), PromiseStatus.AT_RISK, "과속")
     kph = 40f
     r.run(t0 + 95_100, t0 + 100_000)
