@@ -111,7 +111,9 @@ class RestTracker(
         } else {
             drivingMs = s.drivingMs
             headsUpDone = s.headsUpDone
-            mainDone = s.mainDone
+            // 1.3.2(P1-5): 목표를 넘긴 채 쉬지 않고 다시 출발 — 본 알림을 다시 걸어 다시 달릴 때 말함(반복 포함).
+            // 앞 세션에서 본 알림이 침묵 구간에 막혀 있다가 시동을 끄면 영영 말하지 않던 것(B09)
+            mainDone = s.mainDone && s.drivingMs < targetMs
             parkedSince = if (s.parkedAtSave) last else null   // 저장 때 세워져 있었으면 꺼진 시간도 쉼에 넣음(1.3.0: 아니면 지금부터 셈)
         }
     }

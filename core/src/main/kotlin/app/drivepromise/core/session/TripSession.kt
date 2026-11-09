@@ -204,6 +204,8 @@ class TripSession(
     // ---------------------------------------------------------------- 음성 쪽 콜백(플랫폼 → 세션)
     fun onNavPlayers(active: Int): VoiceArbiter.Action = voice.onNavPlayers(clock.nowMs(), active)
     fun onFocus(change: VoiceArbiter.Focus): VoiceArbiter.Action = voice.onFocus(clock.nowMs(), change)
+    /** 1.3.2(P1-6): 내비 안내가 끝났다고 볼 수 있는가(목록에 남은 재생기 규칙 포함) — 앱이 듣기(마이크)를 열지 판단 */
+    fun navClear(): Boolean = arbiter.canStart(clock.nowMs())
     fun onSpeechDone(id: Long) {
         val now = clock.nowMs()
         voice.onDone(id, now)

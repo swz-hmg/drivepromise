@@ -81,7 +81,7 @@ object Specs {
         "S39 시간 읽기 — 한 시간 50분·두 시간·두 시간 5분 / 2 hours 5 minutes" to ::s39,
         "S40 영어 문장" to ::s40,
         "S41 미룸 조건 — 세워 둔 동안 미루고 출발하면 말함(버리지 않음)" to ::s41,
-    ) + EngineSpecs.all + SessionSpecs.all + ReviewSpecs.all + FixSpecs.all
+    ) + EngineSpecs.all + SessionSpecs.all + ReviewSpecs.all + FixSpecs.all + P1Specs.all
 }
 
 // ---------------------------------------------------------------- 도우미

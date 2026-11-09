@@ -56,6 +56,8 @@ object PreTripPlanner {
         val avoidHw = i.promises.any { it is Promise.AvoidHighway }
         val rest = i.promises.filterIsInstance<Promise.RestEvery>().firstOrNull()
         val deadline = if (dark != null && sunset != null) sunset - dark.marginMin * 60_000L else null
+        // 1.3.2(P1-1): 해 뜨기 전 출발은 어두운 길 — 그날 일몰보다 이르다고 ‘해 지기 전’이 아님(B04: 새벽 1시에 ‘약속대로 해 지기 전’)
+        val beforeDawn = sunset != null && sun.sunriseMs != null && i.departAtMs < sun.sunriseMs
         if (i.plans.plans.isEmpty()) {
             return Plan(null, emptyList(), sunset, null, listOf(noRoute(i.lang, i.plans.error)), i.plans.error ?: "NO_ROUTE")
         }
@@ -64,6 +66,7 @@ object PreTripPlanner {
             val ds = when {
                 dark == null -> PromiseStatus.NOT_APPLICABLE
                 deadline == null -> PromiseStatus.UNKNOWN
+                beforeDawn -> PromiseStatus.MISSED
                 arr <= deadline -> PromiseStatus.ON_TRACK
                 sunset != null && arr <= sunset -> PromiseStatus.AT_RISK
                 else -> PromiseStatus.MISSED
@@ -88,9 +91,10 @@ object PreTripPlanner {
         lines += chooseLine(i.lang, choice)
         if (dark != null) {
             if (sunset == null) lines += if (i.lang == Lang.KO) "오늘은 해가 지지 않는 곳이에요." else "The sun does not set here today."
-            else when (choice.darkStatus) {
-                PromiseStatus.ON_TRACK -> lines += darkOk(i.lang, choice.arrivalMs, sunset, i.zone)
-                PromiseStatus.AT_RISK -> lines += darkTight(i.lang, choice.arrivalMs, sunset, i.zone)
+            else when {
+                choice.darkStatus == PromiseStatus.ON_TRACK -> lines += darkOk(i.lang, choice.arrivalMs, sunset, i.zone)
+                choice.darkStatus == PromiseStatus.AT_RISK -> lines += darkTight(i.lang, choice.arrivalMs, sunset, i.zone)
+                beforeDawn -> lines += darkBeforeDawn(i.lang, sun.sunriseMs!!, i.zone)   // 1.3.2(P1-1)
                 else -> lines += darkLate(i.lang, i.departAtMs, choice.arrivalMs, sunset, departBy!!, i.nowMs, i.zone)
             }
         }
@@ -121,6 +125,11 @@ object PreTripPlanner {
     private fun darkOk(lang: Lang, arr: Long, ss: Long, z: ZoneId) =
         if (lang == Lang.KO) "${PromisePhrases.koClock(arr, z)} 도착, 해는 ${PromisePhrases.koClock(ss, z)}에 져요. 약속대로 해 지기 전이에요."
         else "Arrive ${PromisePhrases.enClock(arr, z)}; sunset ${PromisePhrases.enClock(ss, z)} — before dark, as promised."   // 1.3.1: ‘p.m..’ 마침표 겹침
+
+    /** 1.3.2(P1-1): 해 뜨기 전 */
+    private fun darkBeforeDawn(lang: Lang, sunrise: Long, z: ZoneId) =
+        if (lang == Lang.KO) "지금은 해 뜨기 전이에요(일출 ${PromisePhrases.koClock(sunrise, z)}). 약속대로라면 날이 밝은 뒤에 출발해요."
+        else "It is before sunrise (${PromisePhrases.enClock(sunrise, z)}). As promised, leave after it gets light."
 
     private fun darkTight(lang: Lang, arr: Long, ss: Long, z: ZoneId) =
         if (lang == Lang.KO) "${PromisePhrases.koClock(arr, z)} 도착이면 해 지기 직전이에요(일몰 ${PromisePhrases.koClock(ss, z)}). 바로 출발해요."

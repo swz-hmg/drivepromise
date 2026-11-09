@@ -1,5 +1,6 @@
 package app.drivepromise.platform
 
+import app.drivepromise.core.privacy.LogMask
 import ai.pleos.playground.navi.data.RouteInfo
 import ai.pleos.playground.navi.helper.NaviHelper
 import ai.pleos.playground.navi.helper.listener.NaviHelperEventListener
@@ -36,6 +37,13 @@ class PleosRouteSource(private val ctx: Context, private val main: Handler) : Ro
     private var lastSpeedLimit: Int? = null
     private var inited = false
     private val lastArgs = HashMap<String, String>()
+
+    /** 1.3.2(P1-10): 처음 연결이 실패했으면(navi 없음) 다시 — 다시 시도했으면 true */
+    fun retryIfDown(): Boolean {
+        if (!inited || navi != null) return false
+        init()
+        return true
+    }
 
     /** 한 번 초기화한 뒤에는 세션이 바뀌어도 NaviHelper 를 다시 만들지 않고 받는 쪽(sink)만 바꿉니다 — [shutdown] 때만 해제 */
     override fun start(sink: Sink<NaviEvent>): AutoCloseable {

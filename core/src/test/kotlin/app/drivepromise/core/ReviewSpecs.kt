@@ -427,7 +427,9 @@ private fun s99() {
     val b = VoiceArbiter()
     b.onFocus(0, VoiceArbiter.Focus.LOSS_TRANSIENT); b.onFocus(1_000, VoiceArbiter.Focus.GAIN)
     b.onNavPlayers(1_500, 1)
-    ok(!b.canStart(30_000), "GAIN 뒤에 나타난 재생기는 끝날 때까지 기다림")
+    // 1.3.2(P1-6): 포커스 소식 없이 목록에 남은 재생기도 10초 동안 그대로면 끝난 것으로(B16 — 말하지 않을 때 남은 재생기가 모든 말을 막던 것)
+    ok(!b.canStart(11_499), "GAIN 뒤에 나타난 재생기는 10초 동안 기다림")
+    ok(b.canStart(11_500), "10초 동안 목록이 그대로면 끝난 것으로 봄(1.3.2)")
     // GAIN이 없으면(포커스를 잃은 채) 남은 재생기를 끝난 것으로 보지 않음
     val c = VoiceArbiter()
     c.onFocus(0, VoiceArbiter.Focus.LOSS_TRANSIENT); c.onNavPlayers(100, 1)

@@ -97,6 +97,11 @@ class DrivePromiseService : Service() {
     private var backToReal: Runnable? = null
     private var replayHeld = false
     private var lastSave = 0L
+    // 1.3.2(P1-8·P1-10): 루프 예외 횟수 · 포그라운드 시작 실패 · 어댑터 다시 연결
+    private var stepErrors = 0
+    private var fgsFailed = false
+    private var lastRetry = 0L
+    private var adapterRetries = 0
     private var carUx: PleosCarUx? = null
     private var stt: PleosStt? = null
     private var renew: Runnable? = null                  // 1.3.0: 실차 세션 끝 → 새 세션
@@ -124,7 +129,11 @@ class DrivePromiseService : Service() {
     val isDebuggable: Boolean get() = (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
     private val loop = object : Runnable {
         override fun run() {
-            step()
+            // 1.3.2(P1-8): 판정 루프 예외 하나로 앱이 끝나지 않게 — 기록만 하고 다음 틱(처음 5번과 그 뒤 100번마다 기록)
+            try { step() } catch (e: Throwable) {
+                stepErrors++
+                if (stepErrors <= 5 || stepErrors % 100 == 0) L.log("step_error", "n" to stepErrors, "err" to e)
+            }
             main.postDelayed(this, 100)
         }
     }
@@ -132,6 +141,7 @@ class DrivePromiseService : Service() {
     override fun onCreate() {
         super.onCreate()
         startInForeground()
+        if (fgsFailed) { stopSelf(); return }   // 1.3.2(P1-8): 포그라운드가 막혔으면 조용히 멈춤(시스템이 앱을 끝내기 전에)
         prefs = Prefs(this)
         ledgerFile = LedgerFile(this)
         afterQuestion = prefs.listenAfterQuestion
@@ -159,6 +169,7 @@ class DrivePromiseService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (fgsFailed) return START_NOT_STICKY   // 1.3.2(P1-8)
         intent?.getStringExtra("src")?.let { s -> if (s != startSrc) { startSrc = s; L.log("svc", "s" to "start", "src" to s) } }
         val cmd = intent?.getStringExtra("cmd")
         if (cmd != null) {
@@ -258,6 +269,8 @@ class DrivePromiseService : Service() {
     private fun closeSession() {
         stopListening()
         stt?.cancel("session")
+        voice?.cancelAll("session")   // 1.3.2(P1-7): 앞 세션의 말을 멈추고 그 완료·멈춤 소식이 새 세션의 같은 번호 말에 붙지 않게
+        unblockScreen("session")      // 1.3.2(P1-9): 주행 화면 차단은 그 주행에만
         zoneWatch?.close()
         zoneWatch = null
         session?.close()
@@ -305,6 +318,7 @@ class DrivePromiseService : Service() {
                 L.log("phase", "phase" to phase, "now" to nowMs, "mode" to mode)
                 if (phase == TripSession.Phase.ENDED && mode == Mode.REPLAY) scheduleBackToReal()
                 if (phase == TripSession.Phase.ENDED && mode == Mode.REAL) scheduleRenew()   // 1.3.0(C06): 다음 주행
+                if (phase == TripSession.Phase.ENDED) unblockScreen("trip_end")   // 1.3.2(P1-9)
                 if (phase != TripSession.Phase.DRIVING) saveRest()
             }
 
@@ -402,6 +416,13 @@ class DrivePromiseService : Service() {
         screen.update(s.phase == TripSession.Phase.DRIVING)
         val now = System.currentTimeMillis()
         if (mode == Mode.REAL && now - lastSave > 30_000) saveRest()
+        // 1.3.2(P1-10): 차량·내비 연결이 처음에 실패했으면 30초마다 다시(최대 10번) — 부팅 직후 서비스가 늦게 뜨는 경우
+        if (now - lastRetry > ADAPTER_RETRY_MS && adapterRetries < ADAPTER_RETRY_MAX) {
+            lastRetry = now
+            val v = vehicleSrc?.retryIfDown() == true
+            val r = routeSrc?.retryIfDown() == true
+            if (v || r) { adapterRetries++; L.log("adapter_retry", "n" to adapterRetries, "vehicle" to v, "navi" to r) }
+        }
     }
 
     private fun saveRest() {
@@ -443,6 +464,8 @@ class DrivePromiseService : Service() {
     fun setZoneRadius(m: Int) { prefs.zoneRadiusM = m.coerceIn(500, 100_000); L.log("settings", "zoneRadius" to prefs.zoneRadiusM); applySettings() }
     /** 지금 위치(마지막 좌표)를 구역 중심으로 — 위치를 모르면 그대로 */
     fun setZoneHere(): Boolean {
+        // 1.3.2(P1-10): 시연(리플레이) 좌표를 집 구역 중심으로 저장하지 않게 — 실차 위치일 때만
+        if (mode != Mode.REAL) { L.log("settings", "zoneHere" to "not_real", "mode" to mode); return false }
         val f = session?.lastFix ?: run { L.log("settings", "zoneHere" to "no_fix"); return false }
         prefs.setZone(f.lat, f.lon, prefs.zoneRadiusM)
         L.log("settings", "zoneHere" to "ok", "lat" to String.format(java.util.Locale.US, "%.3f", f.lat), "lon" to String.format(java.util.Locale.US, "%.3f", f.lon))
@@ -465,7 +488,17 @@ class DrivePromiseService : Service() {
     /** 세워 둔 동안(또는 주행이 끝난 뒤)만 바로 반영 — 주행 중 바꾸면 다음 주행부터 */
     private fun applySettings() {
         val ph = session?.phase
-        if (mode == Mode.REAL && (ph == TripSession.Phase.PARKED || ph == TripSession.Phase.ENDED)) startReal()
+        if (mode != Mode.REAL) return
+        if (ph == TripSession.Phase.PARKED) startReal()
+        // 1.3.2(P1-10): 주행이 막 끝났으면 요약을 다 말한 뒤 새 세션(scheduleRenew)에서 반영 — 바로 다시 만들면 요약이 잘리던 것
+        else if (ph == TripSession.Phase.ENDED) L.log("settings", "apply" to "at_renew")
+    }
+
+    /** 1.3.2(P1-9): 주행 화면 차단 기억을 지움 — 다음 주행에서 주행 화면을 다시 시도(한 번 가려지면 서비스가 끝날 때까지 음성만이던 것) */
+    private fun unblockScreen(why: String) {
+        if (!screen.blockedSeen) return
+        screen.clearBlocked()
+        L.log("screen", "s" to "unblock", "why" to why)
     }
 
     // ---------------------------------------------------------------- 화면 모드
@@ -558,7 +591,8 @@ class DrivePromiseService : Service() {
         val t = pendingListen ?: return
         val st = stt ?: run { pendingListen = null; return }
         val waited = System.currentTimeMillis() - pendingSince
-        if (voice?.isSpeaking == true || navPlayers > 0) {   // 마이크가 우리 목소리·내비 안내를 듣지 않게 — 끝나기를 기다림
+        // 마이크가 우리 목소리·내비 안내를 듣지 않게 — 끝나기를 기다림. 1.3.2(P1-6): 목록에 남기만 한 내비 재생기는 코어 규칙(VoiceArbiter)으로 끝난 것으로
+        if (voice?.isSpeaking == true || (navPlayers > 0 && session?.navClear() != true)) {
             if (waited > (if (t == ListenTrigger.BUTTON) BUTTON_WAIT_MS else QUESTION_WAIT_MS)) {
                 pendingListen = null
                 L.log("stt_listen", "ok" to false, "why" to "busy", "trigger" to t, "waitedMs" to waited, "nav" to navPlayers)
@@ -682,7 +716,13 @@ class DrivePromiseService : Service() {
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setOngoing(true)
             .build()
-        if (Build.VERSION.SDK_INT >= 34) startForeground(NOTI_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE) else startForeground(NOTI_ID, n)
+        // 1.3.2(P1-8): 배경에서 시작이 막히면(ForegroundServiceStartNotAllowedException 등) 앱이 끝나지 않고 기록 — 서비스는 멈춤(다음 앱 열기·부팅에 다시)
+        try {
+            if (Build.VERSION.SDK_INT >= 34) startForeground(NOTI_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE) else startForeground(NOTI_ID, n)
+        } catch (e: Throwable) {
+            L.log("fgs_error", "err" to e)
+            fgsFailed = true
+        }
     }
 
     companion object {
@@ -702,6 +742,9 @@ class DrivePromiseService : Service() {
         const val BACK_MAX_MS = 45_000L
         /** 1.3.0: 실차 세션이 끝난 뒤 새 세션까지 최소 시간(요약이 화면에 보이게) */
         const val RENEW_MIN_MS = 3_000L
+        /** 1.3.2(P1-10): 차량·내비 연결 다시 시도 간격·최대 횟수 */
+        const val ADAPTER_RETRY_MS = 30_000L
+        const val ADAPTER_RETRY_MAX = 10
 
         fun start(ctx: Context, src: String = "app") {
             ctx.startForegroundService(Intent(ctx, DrivePromiseService::class.java).putExtra("src", src))

@@ -54,6 +54,9 @@ data class EnginePolicy(
     val highwayAheadWords: List<String> = listOf("IC", "JC", "고속도로", "고속국도", "톨게이트", "나들목", "Expressway"),
     val highwayAheadMinM: Int = 150,
     val highwayAheadMaxM: Int = 1_500,
+    /** 1.3.2(P1-4): 구역 안↔밖을 바꾸려면 새 쪽 위치가 이만큼 이어져야(서로 다른 위치 수 · 첫 위치부터 시간) — 지하 출구·터널의 튄 위치 1건으로 ‘못 지킴’이 되던 문제(B07) */
+    val zoneConfirmFixes: Int = 2,
+    val zoneConfirmMs: Long = 5_000,
 )
 
 /**
@@ -83,6 +86,11 @@ class PromiseEngine(
     private var movedEver = false
     private var drivingMsAtStart: Long? = null   // 1.3.1(P0-2): 세션 첫 틱의 운전 시간(복원값)
     private var darkSpokeNight = false
+    /** 1.3.2(P1-2): 마지막으로 달린 시각 — 도착 소식이 없을 때 ‘주차한 시각’으로 판정(세션이 늦게 끝나도) */
+    private var lastDrivingAt: Long? = null
+    private var lastDrivingMs = -1L
+    /** 1.3.2(P1-1): 어두울 때(해 진 뒤 또는 해 뜨기 전) 달린 적이 있음 — 자정을 넘겨 날짜가 바뀌어도 ‘못 지킴’ 유지 */
+    private var darkDriven = false
     private var onHighway = false
     private var highwayEver = false
     private var wiperOnSince: Long? = null
@@ -103,6 +111,10 @@ class PromiseEngine(
     // 1.3.0(ADV-01): 아직 판단하지 않은 갈림길 TBT · 이미 예고한 방면
     private var aheadTbt: NaviEvent.Tbt? = null
     private var aheadWarned: String? = null
+    // 1.3.2(P1-4): 구역 상태를 바꿀 후보 — 다른 쪽으로 처음 본 위치 시각과 이어진 위치 수
+    private var zoneCandSince: Long? = null
+    private var zoneCandN = 0
+    private var zoneLastFixT = Long.MIN_VALUE
 
     val statuses: Map<String, PromiseStatus> get() = status.toMap()
     val isRaining: Boolean get() = raining
@@ -126,6 +138,8 @@ class PromiseEngine(
         w.fix?.let { lastFix = it }
         if (drivingMsAtStart == null) drivingMsAtStart = w.drivingMs
         if (w.vehicle?.driving == true || w.drivingMs > (drivingMsAtStart ?: 0L)) movedEver = true   // 1.3.1(P0-2): 복원된 운전 시간만으로는 ‘움직임’이 아님(S100 회귀)
+        if (drivingNow(w)) lastDrivingAt = w.tMillis
+        lastDrivingMs = w.drivingMs
         for (p in promises) {
             val s = when (p) {
                 is Promise.HomeBeforeDark -> dark(p, w)
@@ -146,8 +160,11 @@ class PromiseEngine(
         for (p in promises) {
             val cur = status[p.id] ?: PromiseStatus.UNKNOWN
             val fin = when (p) {
-                is Promise.HomeBeforeDark -> if (!movedEver) PromiseStatus.UNKNOWN   // 1.3.0d: 움직이지 않은 세션(세워 둔 채 끝남)은 판정하지 않음
-                    else sunset(w)?.let { ss -> if (now <= ss) PromiseStatus.KEPT else PromiseStatus.MISSED } ?: cur
+                // 1.3.0d: 움직이지 않은 세션(세워 둔 채 끝남)은 판정하지 않음.
+                // 1.3.2(P1-1·P1-2): 어두울 때 달렸으면 못 지킴 · 아니면 ‘도착 ?: 마지막으로 달린 시각 ?: 지금’이 어두웠는지로 — 세션이 늦게 끝나도(30분 정차) 주차 시각 기준
+                is Promise.HomeBeforeDark -> if (!movedEver) PromiseStatus.UNKNOWN
+                    else if (darkDriven) PromiseStatus.MISSED
+                    else darkAt(arrivedAt ?: lastDrivingAt ?: now, w)?.let { dk -> if (dk) PromiseStatus.MISSED else PromiseStatus.KEPT } ?: cur
                 // 1.3.0(C03): 도로·와이퍼 신호를 한 번도 못 받았으면 ‘모름’ — 빗길은 30초 이어진 과속만 ‘못 지킴’(끝 순간 1틱 과속은 세지 않음)
                 is Promise.AvoidHighway -> if (highwayEver) PromiseStatus.MISSED else if (!roadSeen) PromiseStatus.UNKNOWN else PromiseStatus.KEPT
                 is Promise.RainCare -> if (rainFastEver) PromiseStatus.MISSED else if (!wiperSeen) PromiseStatus.UNKNOWN else PromiseStatus.KEPT
@@ -167,19 +184,36 @@ class PromiseEngine(
 
     private fun arrival(w: World): Long? = w.etaMs?.let { w.tMillis + it } ?: etaEpochMs
 
+    /** 1.3.2(P1-1): 그 시각이 어두운가 — 그 지역 날짜의 일몰 뒤이거나 일출 전. 해가 지지 않는 곳(일몰 없음)은 null */
+    private fun darkAt(t: Long, w: World): Boolean? {
+        val f = w.fix ?: lastFix ?: return null
+        val st = SolarCalc.at(t, f.lat, f.lon, policy.zone)
+        val ss = st.sunsetMs ?: return null
+        return t > ss || (st.sunriseMs?.let { t < it } ?: false)
+    }
+
+    /** 지금 달리는 중인가 — 차량 신호가 없으면 운전 시간이 늘었는지로 */
+    private fun drivingNow(w: World): Boolean = w.vehicle?.driving ?: (lastDrivingMs >= 0 && w.drivingMs > lastDrivingMs)
+
     private fun dark(p: Promise.HomeBeforeDark, w: World): PromiseStatus {
         val now = w.tMillis
         val ss = sunset(w) ?: return PromiseStatus.UNKNOWN
         val deadline = ss - p.marginMin * 60_000L
-        if (arrivedAt != null) return if (arrivedAt!! <= ss) PromiseStatus.KEPT else PromiseStatus.MISSED
-        if (now > ss) {
+        // 1.3.2(P1-1): 도착 시각도 ‘어두운가’로(새벽 도착은 그날 일몰 전이어도 못 지킴)
+        if (arrivedAt != null) return if (darkDriven || darkAt(arrivedAt!!, w) == true) PromiseStatus.MISSED else PromiseStatus.KEPT
+        if (darkDriven) return PromiseStatus.MISSED   // 1.3.2(P1-1): 자정을 넘겨 날짜가 바뀌어도 그대로
+        if (darkAt(now, w) == true) {
             // 1.3.0d(11/8 실행 화면): 이번 세션에서 아직 움직이지 않았으면(세워 둔 채 해가 짐) ‘못 지킴’이 아니라 ‘위험’(지금 출발하면 해 진 뒤) — 말은 하지 않음.
             // 밤에 집에서 앱을 켜기만 해도 빨간 ‘못 지킴’이 뜨고, 주행 없이 끝내면 요약이 ‘해 지기 전 귀가도 지켜요’라고 나무라던 것
             if (!movedEver) return PromiseStatus.AT_RISK
+            // 1.3.2(P1-2·P1-3): 세워 둔 동안 해가 지면 아직 ‘위험’(주차 시각 기준으로는 지킴) — 다시 달릴 때 못 지킴 + 밤 문장.
+            // 일몰 순간 잠깐 P(편의점)였다고 밤 문장을 버리던 것(B20)과, 일몰 전 세웠는데 세션이 늦게 끝나 ‘못 지킴’이던 것(B13)
+            if (!drivingNow(w)) return PromiseStatus.AT_RISK
+            darkDriven = true
             if (!darkSpokeNight) {
                 darkSpokeNight = true
                 submit(p.id, "night", now, Priority.PROMISE, 3_500, 2_000, Validity.WHILE_STATE, deadline = now,
-                    stillValid = { ww -> arrivedAt == null && ww.vehicle?.driving != false },
+                    stillValid = { arrivedAt == null },
                     render = { c -> PromisePhrases.darkNow(c.world.lang, c.short) })
             }
             return PromiseStatus.MISSED
@@ -202,8 +236,10 @@ class PromiseEngine(
     private fun nightLine(id: String, now: Long, deadline: Long): Utterance? {
         if (darkSpokeNight) return null
         darkSpokeNight = true
+        // 1.3.2(P1-3): 세워 둔 동안엔 버리지 않고 미룸(speakWhen) — 다시 달릴 때 말함
         return Utterance("$id.night", Priority.PROMISE, 3_500, estShortMs = 2_000, deadlineAtMs = now, validity = Validity.WHILE_STATE,
-            stillValid = { ww -> arrivedAt == null && ww.vehicle?.driving != false }, render = { c -> PromisePhrases.darkNow(c.world.lang, c.short) })
+            stillValid = { arrivedAt == null }, speakWhen = { ww -> ww.vehicle?.driving != false },
+            render = { c -> PromisePhrases.darkNow(c.world.lang, c.short) })
     }
 
     // ---------------------------------------------------------------- 고속도로 대신
@@ -292,7 +328,16 @@ class PromiseEngine(
         val movingOut = moving && f.tMillis - ref.first >= 3_000 && d - ref.second >= policy.zoneEdgeMoveM
         prevDist = d
         val now = w.tMillis
-        val isOut = if (outside) d > p.radiusM - policy.zoneBackM else d > p.radiusM   // 히스테리시스: 나갈 때는 경계, 돌아올 때는 경계 안쪽 zoneBackM
+        val rawOut = if (outside) d > p.radiusM - policy.zoneBackM else d > p.radiusM   // 히스테리시스: 나갈 때는 경계, 돌아올 때는 경계 안쪽 zoneBackM
+        // 1.3.2(P1-4): 새 쪽 위치가 zoneConfirmFixes번·zoneConfirmMs 이어져야 상태를 바꿈(위치가 바뀔 때만 셈)
+        if (f.tMillis != zoneLastFixT) {
+            zoneLastFixT = f.tMillis
+            if (rawOut != outside) { if (zoneCandSince == null) { zoneCandSince = f.tMillis; zoneCandN = 1 } else zoneCandN++ }
+            else { zoneCandSince = null; zoneCandN = 0 }
+        }
+        val confirmed = rawOut != outside && zoneCandN >= policy.zoneConfirmFixes && f.tMillis - (zoneCandSince ?: f.tMillis) >= policy.zoneConfirmMs
+        val isOut = if (confirmed) rawOut else outside
+        if (confirmed) { zoneCandSince = null; zoneCandN = 0 }
         if (isOut && !outside) {
             outside = true
             outsideEver = true
@@ -303,6 +348,7 @@ class PromiseEngine(
             scheduler.submit(Utterance("${p.id}.back", Priority.INFO, 2_500, render = { c -> PromisePhrases.zoneBack(c.world.lang) }), now)
         }
         if (isOut) return PromiseStatus.MISSED
+        if (rawOut) return PromiseStatus.AT_RISK   // 1.3.2(P1-4): 밖 위치를 아직 확인하지 못함 — 말하지 않고 ‘위험’만
         val nearEdge = d > p.radiusM - policy.zoneEdgeM && movingOut
         if (nearEdge && !zoneEdgeWarned) {
             zoneEdgeWarned = true

@@ -18,6 +18,8 @@ class VoiceArbiter(
     val gainWaitMs: Long = 3_000,
     val stopBudgetMs: Long = 250,
     val staleAfterGainMs: Long = 4_000,
+    /** 1.3.2(P1-6): 우리가 말하지 않아 포커스 소식이 없을 때 — 목록이 이만큼 그대로면 남은 재생기는 끝난 것으로(11/8 실측 26초 남음, B16) */
+    val staleIdleMs: Long = 10_000,
 ) {
     enum class Focus { GAIN, LOSS_TRANSIENT, LOSS_TRANSIENT_CAN_DUCK, LOSS }
 
@@ -71,7 +73,7 @@ class VoiceArbiter(
     /** 지금 새로 말을 시작해도 되는가 */
     fun canStart(nowMs: Long): Boolean {
         if (navPlayers > 0) {
-            if (!staleAfterGain(nowMs)) return false
+            if (!staleAfterGain(nowMs) && !staleIdle(nowMs)) return false
             if (!staleNoted) { staleNoted = true; staleCount++ }
             return true
         }
@@ -95,6 +97,16 @@ class VoiceArbiter(
         if (inc > re) return false
         val ref = maxOf(re, navChangedAt ?: re)
         return nowMs >= ref + staleAfterGainMs
+    }
+
+    /** 1.3.2(P1-6): 포커스를 잃은 적이 없고(GAIN 소식도 이번 재생기보다 앞) 목록이 [staleIdleMs] 동안 그대로 — 내비 안내 한 번(효과음+말)은 약 3초 */
+    private fun staleIdle(nowMs: Long): Boolean {
+        if (focusLostAt != null) return false
+        val inc = navIncreasedAt ?: return false
+        val re = regainAt
+        if (re != null && re >= inc) return false   // GAIN 뒤 규칙(staleAfterGain)이 맡음
+        val ref = navChangedAt ?: inc
+        return nowMs >= ref + staleIdleMs
     }
 
     fun started(id: Long) {

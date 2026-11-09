@@ -43,6 +43,9 @@ class PleosVoice(
     /** 지금 우리 말을 재생 중인가 — 듣기(STT)는 말이 끝난 뒤에 시작(마이크가 우리 목소리를 듣지 않게) */
     val isSpeaking: Boolean get() = speaking
     private var stopRequested = false
+    /** 1.3.2(P1-7): 앞 말을 끊은 뒤 그 말의 끝 소식(onDone·onStop·onError)이 늦게 와서 새 말에 붙지 않게 — 이 시각까지 1건 무시 */
+    private var staleTerminal = 0
+    private var staleUntil = 0L
     private var focusReq: AudioFocusRequest? = null
     private var holdFocus: Runnable? = null
     private var playCb: AudioManager.AudioPlaybackCallback? = null
@@ -95,6 +98,7 @@ class PleosVoice(
             return
         }
         if (speaking) {   // 코어는 한 번에 하나만 말하므로 오지 않아야 함 — 오면 앞 말을 끊고 새 말
+            markStale("replaced")
             try { t.stop() } catch (_: Throwable) {}
         }
         val u = if (usage == AudioUsage.NAVIGATION_GUIDANCE) NAV else NTF
@@ -117,6 +121,24 @@ class PleosVoice(
             abandonFocus()
             main.post { onError(id, "speak_failed") }
         }
+    }
+
+    /** 1.3.2(P1-7): 세션을 바꿀 때 — 지금 말을 멈추고, 그 말의 끝 소식은 무시(새 세션의 같은 번호 말에 붙지 않게) */
+    fun cancelAll(why: String) {
+        if (!speaking) return
+        markStale(why)
+        L.log("tts_cancel", "id" to curId, "why" to why)
+        speaking = false
+        curId = null
+        stopRequested = true
+        try { tts?.stop() } catch (e: Throwable) { L.log("tts_stop_error", "err" to e) }
+        abandonFocus()
+    }
+
+    private fun markStale(why: String) {
+        staleTerminal = 1
+        staleUntil = System.currentTimeMillis() + STALE_WINDOW_MS
+        L.log("tts_stale_mark", "id" to curId, "why" to why)
     }
 
     override fun stop(id: Long) {
@@ -162,6 +184,10 @@ class PleosVoice(
     }
 
     private fun onTtsEvent(m: String, arg: String?) {
+        if ((m == "onDone" || m == "onStop" || m == "onError") && staleTerminal > 0) {
+            staleTerminal = 0
+            if (System.currentTimeMillis() <= staleUntil) { L.log("tts_stale", "m" to m, "cur" to curId); return }   // 1.3.2(P1-7): 끊은 앞 말의 소식
+        }
         val id = curId ?: return
         when (m) {
             "onDone" -> {
@@ -277,6 +303,8 @@ class PleosVoice(
     }
 
     companion object {
+        /** 1.3.2(P1-7): 끊은 말의 끝 소식을 기다리는 시간(실측 onStop 27 ms) */
+        const val STALE_WINDOW_MS = 1_500L
         const val NAV = AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE
         const val NTF = AudioAttributes.USAGE_NOTIFICATION
         private val PIID = Regex("piid:(-?\\d+)")

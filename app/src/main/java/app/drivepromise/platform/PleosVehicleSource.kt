@@ -63,6 +63,19 @@ class PleosVehicleSource(private val ctx: Context, private val main: Handler) : 
         return AutoCloseable { if (this.sink === sink) this.sink = null }
     }
 
+    /** 1.3.2(P1-10): 처음 연결이 실패한 쪽(AAOS 속성·Vehicle SDK)만 다시 — 다시 시도했으면 true */
+    fun retryIfDown(): Boolean {
+        if (!inited) return false
+        var tried = false
+        if (props == null) {
+            try { car?.disconnect() } catch (_: Throwable) {}
+            car = null
+            initCar(); tried = true
+        }
+        if (vehicle == null) { initVehicleSdk(); tried = true }
+        return tried
+    }
+
     /** 서비스가 끝날 때만 — 차량 연결을 모두 해제 */
     fun shutdown() {
         sink = null
