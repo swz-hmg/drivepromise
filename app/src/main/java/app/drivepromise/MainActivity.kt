@@ -42,6 +42,8 @@ class MainActivity : Activity() {
     private val main = Handler(Looper.getMainLooper())
     private var svc: DrivePromiseService? = null
     private lateinit var subtitle: TextView
+    /** 1.3.5: 부제목 줄 — 약속 5종의 영어 첫 글자 D·R·I·V·E(표시만, 판단·말과 무관) */
+    private lateinit var driveLine: TextView
     private lateinit var tiles: GridLayout
     private lateinit var planCard: TextView
     private lateinit var summaryCard: TextView
@@ -121,6 +123,8 @@ class MainActivity : Activity() {
             setPadding(dp(28), dp(24), dp(28), dp(24))
         }
         root.addView(text("운전약속", 34f, bold = true, color = Color.WHITE))
+        driveLine = text(DRIVE_KO, 16f, color = SUB)
+        root.addView(driveLine)
         subtitle = text("준비 중…", 20f, color = SUB)
         root.addView(subtitle)
         tiles = GridLayout(this).apply { columnCount = 2; setPadding(0, dp(16), 0, dp(8)) }
@@ -175,6 +179,7 @@ class MainActivity : Activity() {
             return
         }
         val lang = s.prefs.lang
+        driveLine.text = if (lang == Lang.KO) DRIVE_KO else DRIVE_EN
         val mode = if (s.mode == DrivePromiseService.Mode.REPLAY) (if (lang == Lang.KO) "리플레이 ${s.replayName}" else "replay ${s.replayName}") else (if (lang == Lang.KO) "실차" else "vehicle")
         val phase = when (ses.phase) {
             TripSession.Phase.PARKED -> if (lang == Lang.KO) "세워 둠" else "parked"
@@ -347,6 +352,9 @@ class MainActivity : Activity() {
         val PROMISE_IDS = app.drivepromise.store.Prefs.PROMISE_IDS
         val PROMISE_KO = mapOf("dark" to "해 지기 전 귀가", "highway" to "고속도로 대신", "rain" to "비 오는 날 조심", "rest" to "쉬기", "zone" to "약속 구역")
         val PROMISE_EN = mapOf("dark" to "Home before dark", "highway" to "No highways", "rain" to "Care in rain", "rest" to "Rest", "zone" to "Stay in zone")
+        /** 1.3.5: 부제목 — Daylight(해 지기 전 귀가) · Rain(비 오는 날 조심) · Interval(쉬기) · Vicinity(약속 구역) · Expressway(고속도로 대신) */
+        const val DRIVE_KO = "D·R·I·V·E 다섯 약속 — 해 지기 전(Daylight) · 비(Rain) · 쉬기(Interval) · 약속 구역(Vicinity) · 고속도로 대신(Expressway)"
+        const val DRIVE_EN = "Five promises that spell DRIVE — Daylight · Rain · Interval · Vicinity · Expressway"
         val REST_CHOICES = listOf(60, 90, 120)
         val MARGIN_CHOICES = listOf(15, 30, 45, 60)
         val RADIUS_CHOICES = listOf(3_000, 5_000, 10_000, 20_000)
