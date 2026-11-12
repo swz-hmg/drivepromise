@@ -15,6 +15,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import app.drivepromise.core.engine.ZoneCrossCheck
 import app.drivepromise.core.ledger.LedgerEvent
 import app.drivepromise.core.ledger.LedgerSink
 import app.drivepromise.core.model.Promise
@@ -176,7 +177,8 @@ class DrivePromiseService : Service() {
         intent?.getStringExtra("src")?.let { s -> if (s != startSrc) { startSrc = s; L.log("svc", "s" to "start", "src" to s) } }
         val cmd = intent?.getStringExtra("cmd")
         if (cmd != null) {
-            L.log("cmd", "cmd" to cmd, "name" to intent.getStringExtra("name"))
+            val nm = intent.getStringExtra("name")   // 1.3.5(11/10 A3): plan의 name은 목적지 — 길이만 기록(다른 명령의 name은 시연 주행 이름)
+            L.log("cmd", "cmd" to cmd, if (cmd == "plan") "nameLen" to (nm?.length ?: 0) else "name" to nm)
             try {
                 when (cmd) {
                     "replay" -> startReplay(intent.getStringExtra("name") ?: "hospital_home")
@@ -282,22 +284,23 @@ class DrivePromiseService : Service() {
 
     /**
      * 약속 구역에 Pleos 근접 알림을 걺 — ENTER/EXIT를 코어 판정(거리)과 나란히 기록(이중 확인). 코어 결정은 바꾸지 않음.
-     * 11/6: 근접 알림이 코어보다 47~88 ms 먼저 와서(1.1.0 실측) 그 자리에서 비교하면 늘 ‘불일치’ → [XCHECK_DELAY_MS] 뒤에 비교하고,
+     * 11/6: 근접 알림이 코어보다 47~88 ms 먼저 와서(1.1.0 실측) 그 자리에서 비교하면 늘 ‘불일치’ → 시간을 두고 비교하고,
+     * 1.3.5: 1.3.2부터 코어는 2번·5초 확인 뒤에 바뀌므로 그 시간은 [ZoneCrossCheck.delayMs](확인 시간 + 3초 = 8초)에서 계산.
      * 코어 상태가 같은 쪽으로 바뀐 시각과의 차(lagMs, 양수 = 코어가 늦음)를 함께 남김.
      */
     private fun watchZone(s: TripSession) {
         val z = s.promises.filterIsInstance<Promise.StayInZone>().firstOrNull() ?: return
         zoneId = z.id
         zoneCoreInside = null
+        val delay = ZoneCrossCheck.delayMs(s.policy.engine)   // 1.3.5(11/10 A4): 코어 확인 시간(2번·5초) + 3초 — 코어 정책이 바뀌면 함께 바뀜(S127)
         zoneWatch = locSrc?.watchZone(z.lat, z.lon, z.radiusM) { inside ->
             val tP = System.currentTimeMillis()
             main.postDelayed({
                 val core = session?.statuses?.get(z.id)
-                val known = core != null && core != PromiseStatus.UNKNOWN && core != PromiseStatus.NOT_APPLICABLE
                 val lag = if (zoneCoreInside == inside && abs(zoneCoreAt - tP) <= 10_000) zoneCoreAt - tP else null
                 L.log("zone_xcheck", "pleos" to (if (inside) "inside" else "outside"), "core" to core,
-                    "agree" to (known && inside == (core != PromiseStatus.MISSED)), "lagMs" to lag, "afterMs" to XCHECK_DELAY_MS)
-            }, XCHECK_DELAY_MS)
+                    "agree" to ZoneCrossCheck.agree(inside, core), "lagMs" to lag, "afterMs" to delay)
+            }, delay)
         }
     }
 
@@ -439,7 +442,8 @@ class DrivePromiseService : Service() {
             lastRetry = now
             val v = vehicleSrc?.retryIfDown() == true
             val r = routeSrc?.retryIfDown() == true
-            if (v || r) { adapterRetries++; L.log("adapter_retry", "n" to adapterRetries, "vehicle" to v, "navi" to r) }
+            val tt = voice?.retryIfFailed() == true   // 1.3.5(11/10 A5): TTS 초기화가 실패였을 때(또는 소식 없이 60초가 지났을 때)만 다시 — 진행 중이면 건드리지 않음
+            if (v || r || tt) { adapterRetries++; L.log("adapter_retry", "n" to adapterRetries, "vehicle" to v, "navi" to r, "tts" to tt) }
         }
     }
 
@@ -746,8 +750,6 @@ class DrivePromiseService : Service() {
     companion object {
         const val CH = "drivepromise"
         const val NOTI_ID = 1
-        /** 근접 알림 뒤 코어와 비교하기까지(코어는 다음 위치 갱신·10 Hz 판정 뒤에 바뀜 — 실측 1.1~1.3초) */
-        const val XCHECK_DELAY_MS = 3_000L
         /** 듣는 시간 — 버튼(A)은 조금 길게, 질문 뒤(B)는 짧게(‘응’·‘아니’) */
         const val BUTTON_LISTEN_MS = 6_000L
         const val QUESTION_LISTEN_MS = 5_000L
@@ -760,7 +762,7 @@ class DrivePromiseService : Service() {
         const val BACK_MAX_MS = 45_000L
         /** 1.3.0: 실차 세션이 끝난 뒤 새 세션까지 최소 시간(요약이 화면에 보이게) */
         const val RENEW_MIN_MS = 3_000L
-        /** 1.3.2(P1-10): 차량·내비 연결 다시 시도 간격·최대 횟수 */
+        /** 1.3.2(P1-10): 차량·내비 연결 다시 시도 간격·최대 횟수 — 1.3.5: TTS 초기화 실패도 같은 묶음 */
         const val ADAPTER_RETRY_MS = 30_000L
         const val ADAPTER_RETRY_MAX = 10
         /** 1.3.3(P2): 벽시계가 단조 시계보다 이만큼 넘게 어긋나면 점프로 봄 */

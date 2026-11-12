@@ -80,7 +80,8 @@ class DriveActivity : Activity() {
     override fun onStop() {
         super.onStop()
         main.removeCallbacks(refresh)
-        svc?.onDriveScreenStopped(isFinishing)
+        // 1.3.5(11/10 A2): 낮/밤(uiMode) 전환 등 구성 변경으로 다시 만들어지는 것은 플랫폼 차단이 아님 — 차단으로 보면 그 주행 동안 음성만 남음
+        if (!isChangingConfigurations) svc?.onDriveScreenStopped(isFinishing)
         try { unbindService(conn) } catch (_: Throwable) {}
         svc = null
     }

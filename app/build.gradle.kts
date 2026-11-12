@@ -32,8 +32,8 @@ android {
         applicationId = "app.drivepromise"
         minSdk = 33
         targetSdk = 35
-        versionCode = 11
-        versionName = "1.3.4"   // 공모전 1차 제출본(11/14) — 1.3.3 + 11/9 종합 점검 P2 나머지(빗길 기준 속도는 말하는 순간 값 · 지난 ETA는 모름 · 속도를 모르면 ‘섰다’로 보지 않음) + G2 문법 후보 이식(기본 v130 그대로)
+        versionCode = 12
+        versionName = "1.3.5"   // 공모전 1차 제출본(11/14) — 1.3.4 + 11/10 전체 점검 반영(위치 권한 COARSE 함께 요청 · 낮/밤 재생성은 차단 아님 · 명령 기록에 목적지는 길이만 · 구역 이중 확인 비교 시점을 코어 값에서 계산 · TTS 초기화 실패 다시 시도 — 진행 중인 연결은 60초까지 기다림)
     }
 
     signingConfigs {

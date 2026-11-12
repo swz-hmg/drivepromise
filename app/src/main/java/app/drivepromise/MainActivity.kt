@@ -340,8 +340,9 @@ class MainActivity : Activity() {
     }
 
     companion object {
-        /** 1.3.1(P0-7): 앱이 직접 요청하는 런타임 권한 — README의 `adb install -g`·`pm grant` 없이도 동작하도록 */
-        val WANTED_PERMISSIONS = arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, PleosFusedLocationSource.PERMISSION, Manifest.permission.POST_NOTIFICATIONS,
+        /** 1.3.1(P0-7): 앱이 직접 요청하는 런타임 권한 — README의 `adb install -g`·`pm grant` 없이도 동작하도록.
+         *  1.3.5(11/10 A1): Android 12+(targetSdk 31+)는 FINE만 요청하면 그 요청을 무시하므로 COARSE를 함께 요청 */
+        val WANTED_PERMISSIONS = arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION, PleosFusedLocationSource.PERMISSION, Manifest.permission.POST_NOTIFICATIONS,
             PleosStt.PERMISSION, Manifest.permission.RECORD_AUDIO, "pleos.car.permission.TTS_SERVICE", "android.car.permission.CAR_SPEED")
         val PROMISE_IDS = app.drivepromise.store.Prefs.PROMISE_IDS
         val PROMISE_KO = mapOf("dark" to "해 지기 전 귀가", "highway" to "고속도로 대신", "rain" to "비 오는 날 조심", "rest" to "쉬기", "zone" to "약속 구역")

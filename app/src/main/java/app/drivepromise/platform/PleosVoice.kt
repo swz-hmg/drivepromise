@@ -11,6 +11,7 @@ import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.media.AudioPlaybackConfiguration
 import android.os.Handler
+import android.os.SystemClock
 import app.drivepromise.L
 import app.drivepromise.core.speech.AudioUsage
 import app.drivepromise.core.speech.Lang
@@ -38,6 +39,11 @@ class PleosVoice(
     private var tts: PleosTts? = null
     var ready = false
         private set
+    /** 1.3.5(11/10 A5): 마지막 초기화가 실패(onFail·예외)로 끝났는가 — 서비스의 30초 재시도가 다시 초기화 */
+    private var initFailed = false
+    /** 1.3.5: 10초 안에 소식이 없었는가 — 늦게라도 끝날 수 있으므로 시작 뒤 [RETRY_AFTER_TIMEOUT_MS]가 지나야 다시(진행 중인 초기화를 30초마다 끊지 않게) */
+    private var initTimedOut = false
+    private var initStartAt = 0L
     private var curId: Long? = null
     private var speaking = false
     /** 지금 우리 말을 재생 중인가 — 듣기(STT)는 말이 끝난 뒤에 시작(마이크가 우리 목소리를 듣지 않게) */
@@ -73,6 +79,15 @@ class PleosVoice(
         abandonFocus()
         tts = null
         ready = false
+    }
+
+    /** 1.3.5(11/10 A5): 초기화가 실패했거나 소식 없이 60초가 지났을 때만 다시(진행 중인 초기화는 두고 봄) — 다시 했으면 true */
+    fun retryIfFailed(): Boolean {
+        if (ready) return false
+        val stale = initTimedOut && SystemClock.elapsedRealtime() - initStartAt >= RETRY_AFTER_TIMEOUT_MS
+        if (!initFailed && !stale) return false
+        reinitIfNotReady()
+        return true
     }
 
     /** 1.3.1(P0-7): 초기화가 실패했던 TTS(권한 없음 등)를 다시 — 이미 준비됐으면 아무것도 안 함 */
@@ -157,6 +172,9 @@ class PleosVoice(
     private fun initTts() {
         try {
             L.log("tts_perm", "granted" to (ctx.checkSelfPermission("pleos.car.permission.TTS_SERVICE") == PackageManager.PERMISSION_GRANTED))
+            initFailed = false
+            initTimedOut = false
+            initStartAt = SystemClock.elapsedRealtime()
             val t = PleosTts(ctx.applicationContext, TtsMode.ON_DEVICE)
             tts = t
             val ev = Reflect.proxyOf(TtsEventListener::class.java, "DPTtsEvents") { m, a ->
@@ -167,18 +185,22 @@ class PleosVoice(
             }
             ttsEv = ev
             val init = Reflect.proxyOf(TtsInitListener::class.java, "DPTtsInit") { m, a ->
-                if (m == "onSuccess") {
+                if (tts !== t) {   // 1.3.5(11/10 B2): 다시 초기화한 뒤 해제된 옛 인스턴스의 늦은 소식은 무시
+                    L.log("tts_init_stale", "cb" to m)
+                } else if (m == "onSuccess") {
                     try { t.addEventListener(ev) } catch (e: Throwable) { L.log("tts_listener_error", "err" to e) }
                     try { t.setLocale(Locale.KOREA) } catch (e: Throwable) { L.log("tts_locale_error", "err" to e) }
                     ready = true
                     L.log("tts_init", "ok" to true, "mode" to "ON_DEVICE", "sdk" to "pleos-tts-3.3.1")
                 } else {
+                    initFailed = true
                     L.log("tts_init", "ok" to false, "cb" to m, "err" to a?.firstOrNull())
                 }
             }
             t.initialize(init)
-            main.postDelayed({ if (!ready) L.log("tts_init_timeout", "ms" to 10_000) }, 10_000)
+            main.postDelayed({ if (tts === t && !ready) { initTimedOut = true; L.log("tts_init_timeout", "ms" to 10_000) } }, 10_000)
         } catch (e: Throwable) {
+            initFailed = true
             L.log("tts_init_error", "err" to e)
         }
     }
@@ -305,6 +327,8 @@ class PleosVoice(
     companion object {
         /** 1.3.2(P1-7): 끊은 말의 끝 소식을 기다리는 시간(실측 onStop 27 ms) */
         const val STALE_WINDOW_MS = 1_500L
+        /** 1.3.5(11/10 A5): 시간 초과(소식 없음)였던 초기화를 다시 하기까지 — 시작 뒤 60초(부팅 직후 음성 서비스가 늦게 떠도 진행 중인 연결을 끊지 않게) */
+        const val RETRY_AFTER_TIMEOUT_MS = 60_000L
         const val NAV = AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE
         const val NTF = AudioAttributes.USAGE_NOTIFICATION
         private val PIID = Regex("piid:(-?\\d+)")

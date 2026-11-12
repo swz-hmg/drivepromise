@@ -26,9 +26,10 @@ DrivePromise core contract v0.1 — frozen on 2026-11-05. 실차(Pleos·AAOS 어
 | `rest` | RestTracker · Phrases(쉬기 문장 ko/en) | 구현·시험 |
 | `ledger` | LedgerEvent · LedgerSink · MemoryLedger · RestCompliance · RestMetrics · **LedgerJson**(JSON Lines 저장 형식, 11/5) | 구현·시험 |
 | `replay` | ReplayParser(스키마 0.2) · ReplayTrip · MiniJson · **ReplayPlayer**(가상 시계 재생기, 11/5) | 구현·시험 |
-| `engine` | PromiseEngine · EnginePolicy — 약속 5종 상태(타일)와 상태 변화의 말 | v0.1(11/6 작업) 구현·시험 |
+| `engine` | PromiseEngine · EnginePolicy — 약속 5종 상태(타일)와 상태 변화의 말 · (1.3.5) **ZoneCrossCheck** — 약속 구역 이중 확인의 비교 시점(`delayMs` = zoneConfirmMs + 3초)과 일치 규칙(`agree`), 앱은 이 값만 씀(S127) | v0.1(11/6 작업) 구현·시험 |
 | `plan` | SolarCalc(NOAA 일출·일몰·시민 박명) · PreTripPlanner(경로 후보 선택·출발 전 카드 문장) | v0.1(11/6 작업) 구현·시험 |
-| `scene` | PromisePhrases(약속 문장 ko/en, 시각 읽기) · **SummaryPhrases**(약속 이름·상태·주행 끝 한 줄) | 구현·시험 |
+| `scene` | PromisePhrases(약속 문장 ko/en, 시각 읽기) · **SummaryPhrases**(약속 이름·상태·주행 끝 한 줄) · **VoicePhrases**(음성 명령 대답) · **Josa**(한국어 조사 이/가·은/는·이에요/예요·시간 읽기) | 구현·시험 |
+| `privacy` | **LogMask** — 내비 콜백에 섞여 오는 이름·주소는 글자 수만, 좌표는 소수 3자리로 기록(1.3.1, 앱 어댑터가 씀) | 구현·시험 |
 | `gate` | **QuietGate · GatePolicy** — QuietWindows 구현(침묵구간검증 v0.1 선택값 P5) | v0.1(11/7 작업을 11/5에 당김) 구현·시험 |
 | `session` | **TripSession · SessionPolicy** — 상태 기계(PARKED→DRIVING→ENDED)와 부품 배선(앱·리플레이·시험이 같은 코드) · `lastSpoken` · `repeatLast()`(11/5 Q036) | v0.1(11/8 작업을 11/5에 당김) 구현·시험 |
 | `ui` | **PresentationMode · Capability · ScreenWhileDriving · ModeResolver** — 화면 모드(정차 화면 / 주행 화면+음성 / 주행 음성만) 결정표·전환 규칙·능력 판단(화면모드전환설계 v0.1, 11/5 Q036 구현) | 구현·시험 |
@@ -80,7 +81,7 @@ fun interface Clock { fun nowMs(): Long }
 | 필드 | 뜻 | 규칙 |
 |---|---|---|
 | key | 종류 이름(예: `rest.main`) | cancel은 접두사로 |
-| priority | SAFETY > PROMISE > INFO | 1.3.4 기준 SAFETY를 쓰는 문장은 없음(자리만 둠 — 운전 약속 문장은 모두 PROMISE·INFO) |
+| priority | SAFETY > PROMISE > INFO | 1.3.5 기준 SAFETY를 쓰는 문장은 없음(자리만 둠 — 운전 약속 문장은 모두 PROMISE·INFO) |
 | estMs / estShortMs | 예상 길이 / 물러선 뒤 짧은 문장 길이 | 1 ms~4초, 짧은 ≤ 원래 |
 | render(SayCtx) | 문장을 말하기 직전에 지금 값으로 | SayCtx = world · repeat · short |
 | deadlineAtMs | 마감(상태 지속형은 목표 시각 = 에스컬레이션 시작) | PROMISE 필수 |
@@ -152,7 +153,8 @@ watchdog(realNow): 말하는 중 ∧ realNow − startedReal > max(15 s, need ×
 | 멈춤 | `Yield(stopWithinMs = 250)` | 실측 겹침 217 ms, 목표 ≤ 300 ms |
 | 다시 말하기 | 내비 재생기가 **모두** 끝나고 1.5초 + GAIN(오지 않으면 3초 더) | 안내 1번 = 재생기 2개(효과음 ≈1.05초 + 말 ≈2.1초) — 첫 재생기만 보면 너무 일찍(v0.6 결함) |
 | 다시 말할 문장 | 처음부터 짧게, 두 번 끊기면 신호 대기 창·확실한 틈에서만 | 스케줄러 |
-| 남은 재생기(1.3.0b) | GAIN이 마지막 재생기 늘어남보다 뒤이고 그 뒤 4초 동안 목록이 그대로면 남은 내비 재생기는 끝난 것으로 봄 — 새 재생기·포커스 잃음엔 다시 물러섬 | 11/8 실측: GAIN 뒤 재생기 1개가 26초 남음(S99) |
+| 남은 재생기(1.3.0b) | GAIN이 마지막 재생기 늘어남보다 뒤이고 그 뒤 4초(`staleAfterGainMs`) 동안 목록이 그대로면 남은 내비 재생기는 끝난 것으로 봄 — 새 재생기·포커스 잃음엔 다시 물러섬 | 11/8 실측: GAIN 뒤 재생기 1개가 26초 남음(S99) |
+| 남은 재생기 — 우리가 말하지 않을 때(1.3.2) | 포커스 소식이 없어도 목록이 `staleIdleMs`(10초) 동안 그대로면 끝난 것으로 봄 | 11/8 실측(B16) |
 
 배선(앱 서비스와 시험이 같은 `VoiceLoop`): 10 Hz `tick(world)` · 재생 목록 콜백 → `onNavPlayers(now, 우리 앱이 아닌 내비 재생기 수)` · 포커스 변화 → `onFocus` · TTS 끝/오류 → `onDone`/`onError`. `Speaker.speak(id, text, usage)` · `Speaker.stop(id)`는 플랫폼(Pleos TextToSpeech ON_DEVICE).
 
@@ -220,7 +222,7 @@ watchdog(realNow): 말하는 중 ∧ realNow − startedReal > max(15 s, need ×
 
 ## 8. 시험 (`./gradlew :core:test`)
 
-스펙 126개(S01~S41 `Specs.kt`, S42~S56·S76 `EngineSpecs.kt`, S57~S75·S77~S83 `SessionSpecs.kt`, S84~S100 `ReviewSpecs.kt` — 1.3.0 외부 검토 반영 + 11/8 실행에서 발견한 S98~S100, S101~S106 `FixSpecs.kt` — 1.3.1 종합 점검 P0, S107~S114 `P1Specs.kt` — 1.3.2 종합 점검 P1, S115~S124 `P2Specs.kt` — 1.3.3·1.3.4 종합 점검 P2, S125~S126 `C18Specs.kt` — 1.3.4 G2 문법 후보가 사전 등록 채점 도구 `rescore.py`와 같은지) — 같은 목록을 JUnit 5(`CoreSpecsTest`, 동적 시험)와 의존성 없는 점검 러너가 돌립니다. S72는 `demo/trips/*.json`(시연 트립 4개, 앱 assets와 같은 파일)을 읽습니다.
+스펙 127개(S01~S41 `Specs.kt`, S42~S56·S76 `EngineSpecs.kt`, S57~S75·S77~S83 `SessionSpecs.kt`, S84~S100 `ReviewSpecs.kt` — 1.3.0 외부 검토 반영 + 11/8 실행에서 발견한 S98~S100, S101~S106 `FixSpecs.kt` — 1.3.1 종합 점검 P0, S107~S114 `P1Specs.kt` — 1.3.2 종합 점검 P1, S115~S124 `P2Specs.kt` — 1.3.3·1.3.4 종합 점검 P2, S125~S126 `C18Specs.kt` — 1.3.4 G2 문법 후보가 사전 등록 채점 도구 `rescore.py`와 같은지, S127 `SeamSpecs.kt` — 1.3.5 코어↔앱 이음매: 약속 구역 이중 확인 비교 시점) — 같은 목록을 JUnit 5(`CoreSpecsTest`, 동적 시험)와 의존성 없는 점검 러너가 돌립니다. S72는 `demo/trips/*.json`(시연 트립 4개, 앱 assets와 같은 파일)을 읽습니다.
 
 | 묶음 | 스펙 |
 |---|---|
@@ -243,6 +245,11 @@ watchdog(realNow): 말하는 중 ∧ realNow − startedReal > max(15 s, need ×
 | 리플레이 멈춤(듣는 동안 가상 시계 정지)·주행 끝 뒤 실시간 · 시연 트립 ‘두 시간 쉬기’를 STT 켜고 60배속으로: 질문 → 5초 멈춤 → ‘응’ → 대답 → 도착 → 요약 2줄 | S82 |
 | ‘약속 알려 줘’ 대답: 판단 전 약속은 ‘모두’에 넣지 않음 | S83 |
 | 1.3.0 검토 반영: 일몰 뒤 도착 후 밤 문장 없음(C01) · 일몰 문장(C02) · 신호 없음 UNKNOWN·위치 TTL·요약(C03) · 신호 대기 창과 방향지시등·급제동(C04) · 글자 수 길이(C05) · 다음 주행 준비(C06) · 조사 문법(C08) · 구역 GPS 흔들림 0/50·실제 접근 1(C09) · 상태 대답 꼬리(C10) · 경로 취소 뒤 값 비움(C11) · 쉬기 설정 90분 → 80/90(C12) · 넘김+쉼·복원 규칙(C13) · 감시 타이머 3번(C14) · 고속도로 갈림길 예고(ADV-01) · 세워 둔 차(P)에는 회전 예측 없음 — 내비 안내에 끊긴 출발 전 계획을 다시 말함(11/8 실행) · GAIN 뒤 목록에 남은 내비 재생기는 4초 뒤 끝난 것으로 봄(11/8 두 번째 실행) · 세워 둔 채 해가 지면 ‘위험’(말 없음)·주행 없는 세션은 요약 없음(11/8 세 번째 실행 화면) | S84~S100 |
+| 1.3.1 종합 점검 P0(빗길 기본 60 · 복원 운전 시간 제외 · 고속도로 진입 한 번 · 비상등 · LogMask 등) | S101~S106 |
+| 1.3.2 종합 점검 P1(해 뜨기 전 어두움 · 구역 2번·5초 확인 · 쉬기 · 물러서기 남은 재생기 등) | S107~S114 |
+| 1.3.3·1.3.4 종합 점검 P2(쉬기 예고 남은 분 · 시계 점프 · 회전 거리 · 목적지 정차 · 도착 뒤 주행 · 시간대 · 빗길 기준 속도 · 지난 ETA · 속도 모름) | S115~S124 |
+| G2 문법 후보 대조(기본 V130 · C18A·C18B = rescore.py, 163줄) | S125~S126 |
+| 코어↔앱 이음매: 약속 구역 이중 확인 — 비교 시점 = 확인 시간 + 3초면 두 방향 일치, 옛 3초는 불일치(1.3.5) | S127 |
 
 ## 8.5 약속 엔진 (`engine` · `plan` · `scene`, 11/6 작업)
 
@@ -264,7 +271,7 @@ object PreTripPlanner { fun plan(Input(nowMs, originLat, originLon, plans, promi
 | 2시간 쉬기 | 운전 ≥ 110분 AT_RISK · ≥ 120분 MISSED(말은 RestTracker) | — |
 | 약속 구역(중심·반경) | 밖 MISSED(나갈 때는 경계, 돌아올 때는 경계 안쪽 100 m — 히스테리시스) · 경계 300 m 안쪽에서 바깥으로 움직이면 AT_RISK(1.3.0: 움직이는 중 ∧ 3초 이상 기록 ∧ 10초 동안 15 m 넘게 멀어짐 — GPS 흔들림 오경보 방지) · 안 ON_TRACK · 위치가 5분 끊기면 UNKNOWN(1.3.0) · (1.3.2) 안↔밖은 새 쪽 위치가 2번 이상·5초 이상 이어질 때만 바꿈(튄 위치 1건은 말 없이 AT_RISK만) | 예고(UNTIL_DEADLINE 60초): “약속 구역 끝이 가까워요…” · 밖: “약속 구역 밖이에요. 안전한 곳에서 돌아가요.” · 돌아오면(INFO): “약속 구역으로 돌아왔어요.” |
 
-EnginePolicy 기본값: rainOnMs 60 000 · rainOffMs 300 000 · rainSpeedFactor 0.8 · rainDefaultLimitKph 60 · rainFastHoldMs 30 000 · highwaySpeedLimitKph 100 · zoneEdgeM 300 · zoneBackM 100 · darkHysteresisMs 300 000 · zone Asia/Seoul · (1.3.0) fixTtlMs 300 000 · zoneEdgeWindowMs 10 000 · zoneEdgeMoveM 15 · highwayAhead true · highwayAheadMinM 150 · highwayAheadMaxM 1 500. 경로 취소(RouteError)·도착은 제한속도·도로 이름을 비움(다음 경로에 옛 값이 남지 않게, 1.3.0). 주행 끝 요약은 UNKNOWN 약속을 ‘지킴’에 넣지 않고 “…은 판단할 신호가 없었어요.”로 따로 말함(1.3.0). 약속 경고(PROMISE)는 `speakWhen = 주행 중`(세워 둔 동안 미룸) — ‘돌아왔어요’(INFO)는 세워 둔 동안에도 말함.
+EnginePolicy 기본값: rainOnMs 60 000 · rainOffMs 300 000 · rainSpeedFactor 0.8 · rainDefaultLimitKph 60 · rainFastHoldMs 30 000 · highwaySpeedLimitKph 100 · zoneEdgeM 300 · zoneBackM 100 · darkHysteresisMs 300 000 · zone Asia/Seoul · (1.3.0) fixTtlMs 300 000 · zoneEdgeWindowMs 10 000 · zoneEdgeMoveM 15 · highwayAhead true · highwayAheadMinM 150 · highwayAheadMaxM 1 500 · (1.3.2) zoneConfirmFixes 2 · zoneConfirmMs 5 000 · (1.3.4) staleEtaGraceMs 120 000. 고속도로 판단은 제한속도 ≥ highwaySpeedLimitKph와 TBT 갈림길 방면으로 함(NaviHelper 3.0.5의 TBT에는 도로 이름이 없어 실제 앱에서 도로 이름 판단은 생기지 않음). 경로 취소(RouteError)·도착은 제한속도·도로 이름을 비움(다음 경로에 옛 값이 남지 않게, 1.3.0). 주행 끝 요약은 UNKNOWN 약속을 ‘지킴’에 넣지 않고 “…은 판단할 신호가 없었어요.”로 따로 말함(1.3.0). 약속 경고(PROMISE)는 `speakWhen = 주행 중`(세워 둔 동안 미룸) — ‘돌아왔어요’(INFO)는 세워 둔 동안에도 말함.
 
 PreTripPlanner 선택 규칙: 위반 0인 후보 중 가장 빠른 것 → 없으면 해 지기 전에 도착하는 것 → 없으면 가장 빠른 것. 문장: 선택 경로·소요 시간 / 해 지기 전(정상·직전·늦음 — 늦으면 출발 시한 또는 ‘다른 날·동승’) / 고속도로 유무 / 2시간 넘으면 쉬기 안내. 경로가 없으면 오류 문장.
 
@@ -297,7 +304,7 @@ object LedgerJson { fun encode(LedgerEvent): String; fun decode(line): LedgerEve
 | hardBrakeMps2 · hardBrakeHoldMs | 3.0 · 2 000 | 급제동(0.3~1.5초 전 표본과 비교) 뒤 침묵 |
 | tbtStaleMs | 60 000 | TBT 소식이 끊기면 회전 예측을 접음 |
 
-세션 상태 기계: `PARKED`(세워 둠·모름) → 차가 움직이면(기어 R·N·D 또는 속도 > 0.5 m/s) `DRIVING` → `ENDED`. 끝 조건: 도착 소식 뒤 정차(P·시동 끔) · 시동 끔 · 도착 뒤 5분 · 도착 없이 30분 정차 · 수동. 끝나면 약속 판정을 닫고(engine.endTrip) 요약 문장(쉬기 요약 · “약속 n개 중 m개를 지켰어요…”)을 세워 둔 동안 INFO로 말합니다. 반복 예약(이미 한 말의 15분 뒤 반복)은 못 전한 말로 세지 않고, 주행 끝 순간 말하던 문장이 끝나도 새 반복을 걸지 않습니다(`SpeechScheduler.tripEnded`, 1.2.1).
+세션 상태 기계: `PARKED`(세워 둠·모름) → 차가 움직이면(기어 R·N·D 또는 속도 > 0.5 m/s) `DRIVING` → `ENDED`. 끝 조건: 도착 소식 뒤 정차(P·시동 끔) · 시동 끔 · 도착 뒤 5분(1.3.3: 5분 뒤에도 달리는 중이면 도착을 지우고 주행을 이어 감 — 경유지·옆 통과) · 도착 없이 30분 정차 · 수동. 끝나면 약속 판정을 닫고(engine.endTrip) 요약 문장(쉬기 요약 · “약속 n개 중 m개를 지켰어요…”)을 세워 둔 동안 INFO로 말합니다. 반복 예약(이미 한 말의 15분 뒤 반복)은 못 전한 말로 세지 않고, 주행 끝 순간 말하던 문장이 끝나도 새 반복을 걸지 않습니다(`SpeechScheduler.tripEnded`, 1.2.1).
 
 리플레이 가상 시계(1.2.1): 구간마다 기울기가 다른 직선 — 주행 중 = 배속, 듣는 동안(`TripSession.listening`) = 0, 주행이 끝난 뒤 = 1. `pumpReplay`가 `hold(listening)`·`realTimeAfterEnd()`를 부릅니다. 까닭(11/6 실행): 60배속에서 5초 듣기는 가상 5분이라 질문 뒤 장면이 사라지고, 요약 첫 줄을 말하는 4초가 가상 4분이 되어 둘째 줄이 늦은 알림 규칙(INFO 60초)에 걸려 사라짐(S82가 옛 코드에서 실패로 확인). `TripSession.pendingAfterEnd` = 끝났는데 말하는 중·듣는 중이거나 요약·대답·다시·계획이 남음 — 앱은 이것이 false가 된 뒤(최소 4초·최대 45초) 실차 세션으로 돌아갑니다.
 
@@ -318,7 +325,7 @@ object ModeResolver {
 class TripSession { val lastSpoken: Step.Speak?; val lastSpokenAtMs: Long?; fun repeatLast(): Boolean /* INFO ‘repeat’, 게이트·물러서기 적용, 연타는 앞 요청 취소 */ }
 ```
 
-앱 배선(계약 밖, `app/`): `ScreenModeController`(입력: 세션 단계·`CarPackageManager.isActivityDistractionOptimized`·DO 인정 가정 설정·차단 감지·사용자 설정·디버그 강제) → `mode` · `launchSeq`. 정차 화면(`MainActivity`, DO 선언 없음)이 `launchSeq` 가 늘 때 주행 화면(`DriveActivity`, `distractionOptimized=true`)을 한 번 띄우고, 주행 화면은 모드가 `DRIVE_DO` 가 아니면 스스로 닫힘. 주행 화면이 UX 제한(`requiresDistractionOptimization`) 중에 가려지면(onStop) 차단으로 보고 서비스 수명 동안 음성만. 주행 화면 내용: 약속 5개 상태(색) · 마지막 문장(60초, 플랫폼 허용 길이 `maxRestrictedStringLength` 안) · 연속 운전 시간 · 큰 버튼 둘(‘다시 들려줘’ → `repeatLast` · 1.2.0부터 ‘🎤 말하기’ → 최대 6초 듣기, 8.8). 스크롤·목록·키보드·설정 없음.
+앱 배선(계약 밖, `app/`): `ScreenModeController`(입력: 세션 단계·`CarPackageManager.isActivityDistractionOptimized`·DO 인정 가정 설정·차단 감지·사용자 설정·디버그 강제) → `mode` · `launchSeq`. 정차 화면(`MainActivity`, DO 선언 없음)이 `launchSeq` 가 늘 때 주행 화면(`DriveActivity`, `distractionOptimized=true`)을 한 번 띄우고, 주행 화면은 모드가 `DRIVE_DO` 가 아니면 스스로 닫힘. 주행 화면이 UX 제한(`requiresDistractionOptimization`) 중에 가려지면(onStop) 차단으로 보고 그 주행 동안 음성만(1.3.2: 주행 끝·세션을 바꿀 때 차단 기억을 지움 · 1.3.5: 낮/밤 전환 같은 구성 변경으로 다시 만들어지는 것은 차단으로 보지 않음). 주행 화면 내용: 약속 5개 상태(색) · 마지막 문장(60초, 플랫폼 허용 길이 `maxRestrictedStringLength` 안) · 연속 운전 시간 · 큰 버튼 둘(‘다시 들려줘’ → `repeatLast` · 1.2.0부터 ‘🎤 말하기’ → 최대 6초 듣기, 8.8). 스크롤·목록·키보드·설정 없음.
 
 ## 8.8 음성 명령 (`voice` · `session`, 11/6 Q040 — STT C안: A 버튼 + B 물을 때만)
 
@@ -340,7 +347,7 @@ class SpeechScheduler { var muteInfoUntilMs: Long }   // ‘조용히’ — INF
 
 | 규칙 | 값 / 동작 |
 |---|---|
-| 문법 우선순위 | QUIET > REPEAT > STATUS > NO > YES. 한국어 설정이면 한국어 문법만, 영어 설정이면 영어 → 한국어 순(VoiceCommands.parse). 한 음절 대답(응·네·예)은 낱말일 때만(‘네비’에 안 걸림) · ‘약속’만 말하면 STATUS, ‘약속대로 쉴게’는 YES |
+| 문법 우선순위 | QUIET > REPEAT > STATUS > NO > YES. 한국어 설정이면 한국어 문법만, 영어 설정이면 영어 → 한국어 순(`VoiceCommands.match`, 1.3.4부터 `VoiceGrammar.match`를 거침). 한 음절 대답(응·네·예)은 낱말일 때만(‘네비’에 안 걸림) · ‘약속’만 말하면 STATUS, ‘약속대로 쉴게’는 YES |
 | 문법 후보(1.3.4, G2 사전 등록 §4) | 한국어 설정에서만, ‘모르면 다시 묻기’ 쪽으로만 바꿈. C18A: ‘약속’이 든 말의 단답 YES/NO(응·그래·좋아·아니…)는 UNKNOWN(‘약속대로 쉴게’처럼 분명한 말은 그대로) · C18B: 단답 YES는 낱말 2개 이하일 때만(‘네 야속 어때’ → UNKNOWN). G2 판정(`rescore.py`의 `decide`)이 채택하면 `ACTIVE` 한 줄만 바꿈 — 대조 S125·S126(163줄) |
 | 질문 맥락 | trigger = QUESTION 이거나, 질문이 끝나고 `answerWindowMs`(30초) 안의 버튼 대답 → YES/NO는 그 질문의 대답(기록에 질문 key). 질문 밖의 응/아니는 도움말 |
 | ‘다시’ | 마지막 문장을 INFO `repeat`로 · 질문 중이면 질문을 다시 들려주고 한 번 더 들음(같은 질문에서 한 번만, 새 질문마다 0으로) |
@@ -374,7 +381,7 @@ class SpeechScheduler { var muteInfoUntilMs: Long }   // ‘조용히’ — INF
 | 어댑터 수명(앱) | 세션마다 start/close | **차량·내비 어댑터는 서비스 수명 동안 한 번만 초기화, 세션은 받는 쪽만 교체**(`shutdown()`은 서비스 종료 때) | 실측: startReal이 3회 불려(생성·권한 결과·리플레이 끝) Car·Vehicle SDK·NaviHelper가 매번 다시 초기화됨 — 낭비·중복 로그 |
 | 제출본(11/5 Q038) | versionCode 1 · 0.1 · release 서명 없음 | **1.0.0(versionCode 2) · release는 저장소 밖 키(`~/.drivepromise/signing.properties`)로 서명, 난독화 없음 · `apk/DrivePromiseTeam_DrivePromise_release.apk` · README(심사용 4항목)·`docs/MANUAL.md`** | 공모전 제출 안내(README 필수 항목·`apk/` 경로·release APK). 코어·앱 동작 변경 없음(스펙 75개 그대로) |
 | 음성 명령(11/6 Q040) | STT는 2차 계획 | **STT C안(A 버튼 + B 물을 때만 듣기) — `voice` 패키지·`VoicePhrases`·`TripSession.voiceInput/listening/takeListenRequest/onVoice`·`SpeechScheduler.muteInfoUntilMs`·Ledger `VoiceCommand`·RestTracker 질문형 문장(`ask`)·스펙 S77~S80 · 앱 1.2.0(versionCode 4)** | 사용자 결정(C안). 늘 듣지 않음(웨이크워드 없음)·닫힌 문법·모르면 행동하지 않음 — 잘못 알아듣고 행동하는 것보다 한 번 더 묻는 쪽이 안전. STT가 없으면 1.1.0과 같은 문장·동작 |
-| 근접 알림 비교(11/6) | 알림 순간에 비교 | **알림 3초 뒤 비교 + 시간 차 `lagMs`** | 1.1.0 실측: 근접 알림이 코어보다 47~88 ms 먼저 와서 0/2 ‘불일치’로 기록됨(판단은 같았음) |
+| 근접 알림 비교(11/6 → 1.3.5) | 알림 순간에 비교 | **알림 3초 뒤 비교 + 시간 차 `lagMs`** → 1.3.5: **코어 확인 시간 + 3초(8초) 뒤, `ZoneCrossCheck`에서 계산** | 1.1.0 실측: 근접 알림이 코어보다 47~88 ms 먼저 와서 0/2 ‘불일치’로 기록됨(판단은 같았음) |
 | 11/6 실행 보정(Q041) · 앱 1.2.1(versionCode 5) | 질문 판정 = 본 알림 첫 말 · 리플레이 시계 = 배속 고정 · 실차 복귀 = 끝 15초 뒤 · 끝난 뒤 반복 예약 · 경로 취소 = 실패 · 계획 오류 문장에 코드 | **질문 판정 = ‘?’로 끝난 문장(`Phrases.isQuestion`) · 리플레이 시계 = 듣는 동안 멈춤·끝난 뒤 실시간(`hold`·`realTimeAfterEnd`) · 실차 복귀 = 할 말이 끝난 뒤(`pendingAfterEnd`, 4~45초) · `tripEnded` 뒤 반복 없음 · 요청 뒤 3초 안 취소 = 앞 경로 바뀜(새 경로 15초 기다림) · 오류 코드는 말하지 않음 · 스펙 S81·S82 · 와이퍼 `WindowArea(FRONT_WINDSHIELD)`+`CAR_WINDOWS` · 시연 트립 rest_two_hours v0.2(ETA 15:18 · 2:13:20 도착)** | 11/6 에뮬레이터 실행(run_1106_094037): ‘곧 도착’ 문장 뒤 12초 듣는 사이 15초 복귀가 요약을 끊음(요약 0/2) · 60배속 요약 둘째 줄 소실(S82로 발견) · `onRouteCancelled` 139 ms 뒤 새 경로 5.8초 뒤 · `registerWiperState(WindowArea, …)` 영역 인자를 못 만듦. 음성 시험 실패는 앱이 아닌 실행 스크립트(adb가 반복문 입력을 먹어 0.19초만 주입) |
 | 11/7 외부 검토 반영(Q047·Q048) · 앱 1.3.0(versionCode 7) | 1.2.2 동작 | **일몰 문장 정정·도착 뒤 밤 문장 없음 · 신호 없음 = UNKNOWN(고속도로·비·구역 TTL 5분) · 신호 대기 창에서 방향지시등·급제동 제외 · 글자 수 말 길이·감시 타이머·실패 뒤 2초 · 조사 허용 문법(한국어 모드 = 한국어 표만) · 구역 예고 = 움직이며 10초 15 m · 경로 취소/도착 때 제한속도·도로 비움 · 쉬기: 넘김 따로 말함·복원은 저장 때 정차였거나 60분 이상·끄기 · 고속도로 갈림길 예고(TBT `toward`) · 약속 정하기 화면·설정 명령 · 시동 자동 시작(BootReceiver)·주행 끝 뒤 다음 실차 세션 · 서비스 DUMP 보호·DriveActivity 비공개 · 위치 로그 소수 3자리 · 스펙 S84~S97 → 97개 · (11/8 1차 실행 뒤) 세워 둔 차(P)에는 회전 예측 없음(`QuietGate.parked`) — 내비 안내에 끊긴 출발 전 계획 문장이 정차 중 다시 나가지 못하던 것(C05 글자 수 길이와 겹침) · 시연 트립 hospital_home 17:16 출발·ETA 17:19 · 스펙 S98 · (11/8 두 번째 실행 뒤) 포커스 GAIN 뒤 내비 재생기 하나가 목록에 26초 남아(재생은 끝남) 계획 문장이 다시 못 나감 → GAIN이 마지막 재생기 늘어남보다 뒤이고 4초 동안 목록이 그대로면 끝난 것으로 봄(`VoiceArbiter.staleAfterGainMs`) · 스펙 S99 · (11/8 세 번째 실행 화면) 밤에 세워 둔 차의 ‘해 지기 전 귀가’가 빨간 ‘못 지킴’, 주행 없이 끝낸 세션의 요약이 ‘해 지기 전 귀가도 지켜요’ → 움직이지 않은 세션은 해 진 뒤 AT_RISK(말 없음)·주행 끝 판정 UNKNOWN·요약 문장 없음(`PromiseEngine.movedEver` · `TripSession.end`) · 스펙 S100 → 100개** | codex 검토 17건 사실 확인(F07은 adb 명령을 지키려 DUMP 권한으로, F09는 Q027 정책 유지 + 넘김 따로 기록) · antigravity 검토 일부 반영(오류 6건 제외). 문법 C18(질문 맥락)은 G2 녹음 뒤 LOPO로 미룸 |
 | 11/6 두 번째 실행 보정(Q043) · 앱 1.2.2(versionCode 6) | ‘약속 알려 줘’ = 판단된 약속 수 + ‘모두’ · 와이퍼 등록 = 한 인자 꼴이 없으면 먼저 `vsdk_reg_missing` | **판단 전(UNKNOWN) 약속이 있으면 ‘모두’라 하지 않고 하나면 이름(“해 지기 전 귀가는 아직 몰라요”), 둘 이상이면 개수 · 위험과 섞이면 ‘나머지’ 대신 개수(`VoicePhrases.status`, 스펙 S83 → 83개) · `vsdk_reg_missing`은 모든 등록 꼴이 실패했을 때만** | run_1106_135232: 화면엔 약속 5개인데 대답이 “약속 4개 모두 지키는 중이에요.”(목적지가 없어 해 지기 전 귀가가 UNKNOWN) · 와이퍼가 WindowArea 꼴로 등록되고 첫 값도 받았는데 판정이 ‘실패’로 셈 |
@@ -383,8 +390,11 @@ class SpeechScheduler { var muteInfoUntilMs: Long }   // ‘조용히’ — INF
 | 11/9 종합 점검 P1(Q062) · 앱 1.3.2(versionCode 9) | 1.3.1 동작 | **해 지기 전: 해 뜨기 전·자정 넘김도 어두움(엔진·계획) · 판정 시각 도착 ?: 마지막 주행 · 세워 둔 동안 해가 지면 위험(밤 문장은 다시 달릴 때) · 구역 안↔밖 2번·5초 확인 · 쉬기: 본 알림 시각을 넘긴 채 다시 출발하면 본 알림 다시 · 내비 재생기가 포커스 소식 없이 10초 그대로면 끝난 것으로(듣기 시작에도) · LogMask 코어로 · 앱: 세션 바꿀 때 TTS 멈춤 + 끊은 말의 끝 소식 무시 · 루프 예외·포그라운드 시작 실패 보호 · 주행 화면 차단은 그 주행만 · 주행 끝엔 설정을 새 세션에서 · 구역 중심은 실차 위치만 · 차량·내비 연결 30초마다 다시(최대 10번)** | 11/9 프로브(B02·B03·B04·B07·B09·B13·B14·B16·B20) + 1.3.1 실행 run_1109_110640(내비 기록) — S107~S114 |
 | 11/9 종합 점검 P2(Q063) · 앱 1.3.3(versionCode 10) | 1.3.2 동작 | **쉬기 예고의 남은 분은 말하는 순간 값(반올림) · 벽시계 점프는 앱이 단조 시계(elapsedRealtime)와 비교해 5초 넘게 어긋나면 `onClockJump`로 알림 → 그 사이는 운전·정차 시간에 넣지 않고 정차·도착·출발 시각을 옮김 · 침묵 구간·내비 간격은 ‘미래’ 기록을 버림(시계 뒤 점프) · 회전까지 남은 거리는 TBT 뒤 달린 거리를 적분(신호 대기 뒤 출발) · 오래 세워 둬서 끝나면 그 마지막 정차의 쉼은 이번 주행 판정에서 뺌 · 도착 소식 5분 뒤에도 움직이면 도착을 지우고 주행을 이어 감 · 시간대와 맞지 않는 좌표로는 해 지기 전 판단 안 함 · 헤드리스 시스템 사용자(0)에서는 부팅 때 시작 안 함** | 11/9 프로브 B10·B11·B17·B21·B22·B23·B24 — S115~S121 · B05·B06은 NaviHelper 3.0.5 TBTInfo(type·distance·description)에 도로 이름이 없어 실제 앱에서는 생기지 않음 · B18 음성 문법은 G2 사전 등록 규칙으로 |
 | 11/9 종합 점검 P2 나머지(Q066) · 앱 1.3.4(versionCode 11) | 1.3.3 동작 | **빗길 과속 문장의 기준 속도는 말하는 순간의 제한속도로 다시 계산(밀린 사이 도로가 바뀌면 옛 기준을 말하던 것 · 이제 과속이 아니면 말하지 않음) · 도착 예정 시각이 2분(`staleEtaGraceMs`) 넘게 지났는데 도착 소식이 없으면 ETA를 모름으로(‘지금 도착’으로 보아 해 지기 전·쉬기 ‘곧 도착’이 틀리던 것) · 속도를 모르면 ‘섰다’로 보지 않음(`VehicleSnapshot.stopped` — 신호 대기 창이 늘 열리던 것) · 비 오는 동안 속도를 모르면 빗길 판정 UNKNOWN, 주행 끝도 UNKNOWN(속도 없음을 0으로 보고 ‘지킴’이던 것) · 구역 경계·도착 지우기는 `movingKnown`으로 1.3.3과 같은 값 · G2 문법 후보 C18A·C18B를 `VoiceGrammar`로 이식(기본 V130, `VoiceCommands.kt`는 바이트까지 그대로)** | 11/9 종합 점검 P2(지난 ETA·속도 없음·비 문장의 옛 기준) — S122~S124 · G2 사전 등록(Q065) — S125~S126 |
+| 11/10 전체 점검(Q072·Q073) · 앱 1.3.5(versionCode 12) | 1.3.4 동작 | **코어: `engine.ZoneCrossCheck`(이중 확인 비교 시점 = zoneConfirmMs + 3초, 일치 규칙) + S127 · 앱: 위치 권한 요청에 COARSE를 함께(Android 12+는 FINE만 요청하면 무시) · 주행 화면이 구성 변경(낮/밤)으로 다시 만들어지면 차단으로 보지 않음 · adb `plan` 명령 기록은 목적지 글자 수만 · 근접 알림 비교 8초 뒤(`ZoneCrossCheck.delayMs`) · TTS 초기화가 실패면 30초 재시도 묶음에서 다시(소식 없이 10초를 넘긴 초기화는 시작 60초 뒤부터 — 진행 중인 연결을 끊지 않게), 해제된 옛 인스턴스의 늦은 소식은 무시** | 1.3.2에서 구역 확인(2번·5초)이 생긴 뒤에도 앱 비교는 3초 그대로라 두 방향 모두 불일치가 나오는 구조였음(결합 결함). 나머지는 마켓 설치·실차에서 드러날 앱 층 결함 — 판단 로직은 그대로 |
 
 ## 10. 다음(이 계약 위에)
+
+> 아래는 11/3~11/8에 세운 계획 기록입니다(지난 날짜 그대로 둠). 지금 일정: 11/12 코드 동결 → 11/14 1차 제출 → 12/3~4 2차 발표(실동작 시연). 2차 전 과제: 서비스 종류에 location·microphone(앱이 앞일 때) · RECORD_AUDIO 필요 여부 · 실차·실제 마이크 · 시니어 음성(G2) 결과 반영.
 
 | 날짜 | 할 일 |
 |---|---|

@@ -1,6 +1,6 @@
 # 운전약속(DrivePromise) 기동·재기동·운영 매뉴얼
 
-대상: 심사·시연·개발에서 Pleos Connect 에뮬레이터로 앱을 실행하는 사람. 버전 1.3.4(versionCode 11) 기준 — 위치는 Pleos FusedLocation SDK(안 되면 LocationManager 자동 전환), 음성 명령은 Pleos SpeechToText SDK(ON_DEVICE, 안 되면 버튼만).
+대상: 심사·시연·개발에서 Pleos Connect 에뮬레이터로 앱을 실행하는 사람. 버전 1.3.5(versionCode 12) 기준 — 위치는 Pleos FusedLocation SDK(안 되면 LocationManager 자동 전환), 음성 명령은 Pleos SpeechToText SDK(ON_DEVICE, 안 되면 버튼만).
 
 ## 0. 한눈에
 
@@ -58,7 +58,7 @@ adb shell am start -n app.drivepromise/.MainActivity
 | 위치 | 정상 |
 |---|---|
 | 부제 | `세워 둠 · 연속 운전 0분 · 실차 · 위치 Pleos · …` (Pleos 위치를 못 쓰면 `위치 GPS(대체)`) |
-| 약속 타일 5개 | 초록(지키는 중) 또는 회색(모름 — 신호가 아직 없음). 해가 진 뒤 세워 둔 차면 ‘해 지기 전 귀가’가 주황(위험 — 지금 출발하면 해 진 뒤, 말은 하지 않음)이 정상 |
+| 약속 타일 5개 | 초록(지키는 중) 또는 회색(모름 — 신호가 아직 없음). 해가 진 뒤 세워 둔 차면 ‘해 지기 전 귀가’가 주황(위험 — 지금 출발하면 해 진 뒤, 말은 하지 않음)이 정상. 단 에뮬레이터 기본 위치처럼 좌표가 기기 시간대(Asia/Seoul)와 맞지 않으면 회색(모름 — 1.3.3, S121) |
 | 음성으로 말하기 칸 | ‘다시 · 약속 알려 줘 · 조용히 해 — 쉬기 질문엔 응이나 아니’ + 🎤 말하기 · 질문 뒤 듣기: 켬 (음성 인식이 안 되면 ‘말하기 없음’·‘다시 시도’) |
 | 버튼 줄 | 경로 계획 · 주행 끝 · 한/영 · 실차 모드로 / 주행 중 화면 · DO 인정 가정 · 주행 화면 미리보기 / ▶ 시연 주행 4개 · ■ 리플레이 멈춤 |
 | 약속 정하기(1.3.0) | 약속 5개 켬/끔 · 쉬기 간격 · 해 지기 전 여유 · 구역 반경 · 지금 위치를 구역 중심으로 · 시동 때 자동 시작 (세워 둔 동안 가족과 함께 — 3-2) |
@@ -148,7 +148,7 @@ adb forward tcp:8088 tcp:8088 && open http://127.0.0.1:8088/
 | 바꿀 것 | 앱 반응 |
 |---|---|
 | 기어 D(P가 아닌 기어) | 주행 시작 — 연속 운전 시간 계산(신호 대기도 포함), 주행 화면 |
-| 와이퍼 60초 이상 | 비로 봄 — 한 문장(타일은 지키는 중) · 비 속에서 제한속도의 80%를 30초 넘기면 ‘위험’ + 감속 문장(제한속도 정보가 없으면 60 km/h 기준) |
+| 와이퍼 60초 이상 | 비로 봄 — 한 문장(타일은 지키는 중) · 비 속에서 제한속도의 80%를 넘으면 바로 ‘위험’, 30초 넘게 이어지면 감속 문장 한 번(기준 속도는 말하는 순간의 제한속도로 다시 계산 — 1.3.4) · 주행 끝 ‘못 지킴’도 30초 넘게 이어졌을 때만(제한속도 정보가 없으면 60 km/h 기준) · 속도를 모르면 ‘모름’(1.3.4) |
 | 방향지시등 켬 | 그동안 말하지 않음(침묵 구간) |
 | 기어 P 15분 이상 | 쉰 것으로 봄 — 운전 시간 0으로, 쉬기 예고·알림 뒤였다면 다시 출발할 때 칭찬 한 번 |
 
@@ -158,8 +158,8 @@ adb forward tcp:8088 tcp:8088 && open http://127.0.0.1:8088/
 |---|---|
 | 주 원천 | Pleos FusedLocation SDK 1.1.3 — `isSupported()` → 권한 `pleos.car.permission.FUSED_LOCATION` → `initialize()` → 위치 콜백 등록 + 마지막 위치 |
 | 대체 | 지원 안 함 · 권한 없음 · 등록 오류 · 15초 동안 좌표 없음 · 10초 넘게 끊김 → Android LocationManager(1초). 둘 다 돌 때는 3초 안의 Pleos 좌표를 먼저 씀 |
-| 약속 구역 판정 | 코어가 거리(하버사인)로 — 구역 끝 300 m 안에서 **움직이며 10초 동안 15 m 넘게** 멀어지면 ‘위험’(1.3.0: 세워 둔 차의 GPS 흔들림은 예고하지 않음), 밖이면 ‘못 지킴’, 돌아오면 ‘지키는 중’ · 위치가 5분 넘게 끊기면 ‘판단할 신호 없음’(1.3.0) |
-| 이중 확인 | 같은 구역에 Pleos 근접 알림(ENTER/EXIT)을 걸어 기록·부제 표시(`구역 밖(Pleos 확인)`)에 씀. 알림 3초 뒤 두 판단이 같은지 `zone_xcheck agree=`로, 코어가 바뀐 시각과의 차이를 `lagMs=`(양수 = 코어가 늦음)로 남김(코어 결정은 바꾸지 않음) |
+| 약속 구역 판정 | 코어가 거리(하버사인)로 — 구역 끝 300 m 안에서 **움직이며 10초 동안 15 m 넘게** 멀어지면 ‘위험’(1.3.0: 세워 둔 차의 GPS 흔들림은 예고하지 않음), 밖이면 ‘못 지킴’, 돌아오면 ‘지키는 중’ · 밖/안은 **새 쪽 위치가 2번·5초 이어져야** 바뀌고(튄 위치 하나로는 안 바뀜 — 그사이 밖 위치는 ‘위험’만, 1.3.2), 돌아올 때는 경계 안쪽 100 m까지 들어와야 함 · 위치가 5분 넘게 끊기면 ‘판단할 신호 없음’(1.3.0) |
+| 이중 확인 | 같은 구역에 Pleos 근접 알림(ENTER/EXIT)을 걸어 기록·부제 표시(`구역 밖(Pleos 확인)`)에 씀. 알림 **8초 뒤**(코어 확인 5초 + 여유 3초 — 코어의 `ZoneCrossCheck.delayMs`에서 계산, 1.3.5) 두 판단이 같은지 `zone_xcheck agree= afterMs=8000`으로, 코어가 바뀐 시각과의 차이를 `lagMs=`(양수 = 코어가 늦음 — 확인 시간 때문에 약 +5초가 정상)로 남김(코어 결정은 바꾸지 않음). 1.3.2~1.3.4는 3초 뒤에 비교해 두 방향 모두 `agree=false`가 나오는 구조였음(11/10 점검, S127) |
 | 기록 | `location`(등록·대체) · `loc_src`(원천 바뀜) · `loc_fix`(좌표, 소수 3자리 ≈ 100 m — 1.3.0에서 4자리→3자리, 정확도 `r4`는 뺌) · `geofence`(add·registered·transition·removed) · `zone_xcheck` |
 
 세워 둔 채 시험(기본 구역: 서울시청 반경 10 km, 경도가 먼저). 한 줄씩 10초 간격으로 넣습니다.
@@ -179,7 +179,7 @@ adb logcat -d -s DP | grep -E "loc_fix|geofence|zone_xcheck|status"
 | 중심(세션 새로 시작) | 지키는 중 | `location … s=registered` · `geofence s=add` · `geofence s=registered` |
 | 9.0 km | 지키는 중 | `loc_fix src=pleos lat=37.647` |
 | 9.85 km | 지키는 중(1.3.0 — 세워 둔 시험이라 ‘바깥으로 가는 중’이 아님) | `status … zone:ON_TRACK` |
-| 10.5 km | 못 지킴 | `zone:MISSED` · `geofence … tr=EXIT` · `zone_xcheck … agree=true` |
+| 10.5 km | 못 지킴 | `zone:MISSED`(첫 밖 위치 약 5초 뒤) · `geofence … tr=EXIT` · `zone_xcheck … agree=true afterMs=8000` |
 | 8.0 km | 지키는 중 | `zone:ON_TRACK` · `tr=ENTER` · 말 “약속 구역으로 돌아왔어요.” |
 
 약속 경고(구역 끝·밖) 문장은 주행 중에만 말하므로 세워 둔 시험에서는 들리지 않는 것이 정상입니다. 끝나면 원래 위치로 되돌려 둡니다(예: `adb emu geo fix 127.0276 37.4979`).
@@ -227,7 +227,7 @@ adb shell am start-foreground-service -n $SVC --es cmd stt_text --es text "'다�
 | 상태 한 줄(event=status_now, 위치 원천 `loc=` 포함) | `adb shell am start-foreground-service -n $SVC --es cmd status` |
 | 말한 문장·요약·화면 모드만 | `adb logcat -d -s DP \| grep -E "event=(speak\|summary\|mode)"` |
 | 말 길이 실측(1.3.0) | `adb logcat -d -s DP \| grep -E "event=(dur\|tts_watchdog)"` — `dur … est= ms= over=`: 예상 길이(글자 수 × 0.165초 + 0.3초)와 실제 길이 · `tts_watchdog`: 재생 끝 알림이 오지 않아 말을 끊고 다시 시도(예상 길이 × 2.5, 최소 15초) |
-| 보호 기록(1.3.2) | `adb logcat -d -s DP \| grep -E "event=(tts_cancel\|tts_stale\|step_error\|fgs_error\|adapter_retry)"` — `tts_cancel`·`tts_stale`: 세션을 바꿀 때 말을 멈추고 끊은 말의 끝 소식은 무시 · `step_error`: 판정 루프 예외(앱은 계속, 처음 5번·100번마다 기록) · `fgs_error`: 포그라운드 시작이 막힘(서비스는 조용히 멈춤) · `adapter_retry`: 차량·내비 연결 다시(30초마다 최대 10번) · `screen s=unblock`: 주행 화면 차단 기억을 주행 끝에 지움 · `settings apply=at_renew`: 주행이 막 끝났으면 요약 뒤 새 세션에서 반영 · `settings zoneHere=not_real`: 시연 중엔 구역 중심을 저장하지 않음 · (1.3.3) `clock_jump`: 벽시계가 5초 넘게 뜀(시각 보정) — 그 사이는 운전 시간에 넣지 않음 · `arrival_cleared`: 도착 소식 5분 뒤에도 달리는 중이라 도착을 지우고 주행을 이어 감 · `rest_undo_final_park`: 오래 세워 둬서 끝난 주행은 목적지 정차를 쉼으로 치지 않음 · `boot skip=headless_system_user`: 화면 없는 시스템 사용자(0)에서는 시작하지 않음 |
+| 보호 기록(1.3.2) | `adb logcat -d -s DP \| grep -E "event=(tts_cancel\|tts_stale\|tts_init_stale\|step_error\|fgs_error\|adapter_retry\|screen\|settings\|clock_jump\|arrival_cleared\|rest_undo_final_park\|boot)"` — `tts_cancel`·`tts_stale`: 세션을 바꿀 때 말을 멈추고 끊은 말의 끝 소식은 무시 · `step_error`: 판정 루프 예외(앱은 계속, 처음 5번·100번마다 기록) · `fgs_error`: 포그라운드 시작이 막힘(서비스는 조용히 멈춤) · `adapter_retry`: 차량·내비 연결 다시(30초마다 최대 10번 — 1.3.5부터 TTS 초기화가 실패했으면 다음 재시도에서, 10초 넘게 소식이 없었으면(`tts_init_timeout`) 시작 60초 뒤부터 `tts=true`로 함께 다시, 해제된 옛 인스턴스의 늦은 소식은 `tts_init_stale`로 무시) · `screen s=unblock`: 주행 화면 차단 기억을 주행 끝에 지움 · `settings apply=at_renew`: 주행이 막 끝났으면 요약 뒤 새 세션에서 반영 · `settings zoneHere=not_real`: 시연 중엔 구역 중심을 저장하지 않음 · (1.3.3) `clock_jump`: 벽시계가 5초 넘게 뜀(시각 보정) — 그 사이는 운전 시간에 넣지 않음 · `arrival_cleared`: 도착 소식 5분 뒤에도 달리는 중이라 도착을 지우고 주행을 이어 감 · `rest_undo_final_park`: 오래 세워 둬서 끝난 주행은 목적지 정차를 쉼으로 치지 않음 · `boot skip=headless_system_user`: 화면 없는 시스템 사용자(0)에서는 시작하지 않음 |
 
 주행 기록은 앱 내부 저장소 `files/ledger/YYYY-MM.jsonl`에 남고 밖으로 보내지 않습니다. 좌표는 기록 파일에 저장하지 않습니다.
 
@@ -251,7 +251,7 @@ adb shell am start-foreground-service -n $SVC --es cmd stt_text --es text "'다�
 
 | 증상 | 확인 | 조치 |
 |---|---|---|
-| 소리가 안 남 | `adb logcat -d -s DP \| grep tts_init` → ok=false | 정차 화면을 열어 권한 허용(1.3.1: 허용하면 다시 시작 없이 TTS 재초기화 `tts_reinit`) 또는 `pm grant … TTS_SERVICE` · Mac 소리·에뮬레이터 오디오 확인 |
+| 소리가 안 남 | `adb logcat -d -s DP \| grep tts_init` → ok=false | 30초 안에 저절로 다시 시도하는지 `adapter_retry … tts=true`·`tts_reinit` 확인(1.3.5) · 정차 화면을 열어 권한 허용(1.3.1: 허용하면 다시 시작 없이 TTS 재초기화 `tts_reinit`) 또는 `pm grant … TTS_SERVICE` · Mac 소리·에뮬레이터 오디오 확인 |
 | 소리가 내비 안내에 묻힘 | 정상 동작 — 내비가 말하면 약 0.2초 만에 물러섰다가 1.5초 뒤 다시 말함 | — |
 | 주행 화면이 안 뜸 | 정차 화면이 앞에 있었는지 · 부제의 모드 | 정차 화면을 앞에 두고 다시 · ‘주행 중 화면: 켜기’ 확인 · 사이드로드에서는 플랫폼이 가릴 수 있음(음성만이 정상) |
 | 차량 신호가 안 들어옴(실차 모드) | Quick Boot로 켰는지 | Cold Boot로 다시 켬 |
