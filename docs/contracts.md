@@ -81,7 +81,7 @@ fun interface Clock { fun nowMs(): Long }
 | 필드 | 뜻 | 규칙 |
 |---|---|---|
 | key | 종류 이름(예: `rest.main`) | cancel은 접두사로 |
-| priority | SAFETY > PROMISE > INFO | 1.3.5 기준 SAFETY를 쓰는 문장은 없음(자리만 둠 — 운전 약속 문장은 모두 PROMISE·INFO) |
+| priority | SAFETY > PROMISE > INFO | 1.3.6 기준 SAFETY를 쓰는 문장은 없음(자리만 둠 — 운전 약속 문장은 모두 PROMISE·INFO) |
 | estMs / estShortMs | 예상 길이 / 물러선 뒤 짧은 문장 길이 | 1 ms~4초, 짧은 ≤ 원래 |
 | render(SayCtx) | 문장을 말하기 직전에 지금 값으로 | SayCtx = world · repeat · short |
 | deadlineAtMs | 마감(상태 지속형은 목표 시각 = 에스컬레이션 시작) | PROMISE 필수 |

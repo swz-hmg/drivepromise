@@ -2,7 +2,7 @@
 
 DrivePromise voice-command check record — what was verified with synthetic speech on the emulator, what is still unmeasured, and the plan fixed in advance for the senior voice test.
 
-이 문서는 음성 명령(Pleos SpeechToText, ON_DEVICE)을 **어디까지 확인했고 무엇을 아직 재지 않았는지**를 숫자와 함께 적습니다. 판 1.3.5 기준입니다.
+이 문서는 음성 명령(Pleos SpeechToText, ON_DEVICE)을 **어디까지 확인했고 무엇을 아직 재지 않았는지**를 숫자와 함께 적습니다. 판 1.3.5에서 쟀습니다. 1.3.6은 음성 명령 코드가 같고, 11/13 에뮬레이터에서 명령 3개(약속 상태 · 다시 들려줘 · 조용히)를 합성음으로 다시 넣어 모두 알아듣고 대답했습니다(‘조용히’는 첫 목소리에서 잘못 들어 다시 묻고, 다른 목소리로 알아들음 — 아래 1장과 같은 양상).
 
 | 한 줄 요약 | |
 |---|---|
