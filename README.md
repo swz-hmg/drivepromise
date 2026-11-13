@@ -10,9 +10,9 @@
 | 앱 이름 | 운전약속 (DrivePromise) · 패키지 `app.drivepromise` · 버전 1.3.5 (versionCode 12) |
 | 한 줄 소개 | D·R·I·V·E 다섯 약속(해 지기 전 귀가 · 비 오는 날 조심 · 2시간마다 쉬기 · 약속 구역 · 고속도로 대신 일반도로)을 차량 신호로 판단하고, 내비 안내·방향지시등 같은 ‘침묵 구간’을 피해 한두 문장으로 말합니다 |
 | APK | [`apk/DrivePromiseTeam_DrivePromise_release.apk`](apk/) (release 빌드, 전용 키 서명) · 체크섬 `apk/SHA256SUMS.txt` |
-| 테스트 환경 | Pleos Connect 에뮬레이터(Android 14 · API 34, 2560×1440) — 아래 3장 |
+| 테스트 환경 | Pleos Connect 에뮬레이터 **v2.1.0**(Android 14 · API 34, 화면 2560×1440) — 아래 3장 |
 | 시연 영상 | [`docs/demo/drivepromise_demo.mp4`](docs/demo/) (약 3분 45초 · 1.3.0 에뮬레이터 실제 녹화 — 1.3.1~1.3.5도 영상 속 장면의 문장·순서가 같음 · 1.3.5의 정차 화면에는 D·R·I·V·E 줄이 하나 더 있음(1.3.2부터 약속 구역 ‘밖’·‘돌아옴’이 위치 확인 때문에 약 1초 늦음): 출발 전 계획 · 시연 주행 4개 · 질문과 대답 · 음성 명령) |
-| 문서 | 운영 매뉴얼 [`docs/MANUAL.md`](docs/MANUAL.md) · 설계 계약 [`docs/contracts.md`](docs/contracts.md) · 음성 명령 점검 기록 [`docs/VOICE_EVAL.md`](docs/VOICE_EVAL.md) |
+| 문서 | 운영 매뉴얼 [`docs/MANUAL.md`](docs/MANUAL.md) · 설계 계약 [`docs/contracts.md`](docs/contracts.md) · 음성 명령 점검 기록 [`docs/VOICE_EVAL.md`](docs/VOICE_EVAL.md) · 발화 타이밍 시뮬레이션 [`docs/TIMING_EVAL.md`](docs/TIMING_EVAL.md) |
 | 개발 방식 | 생성형 AI 도구 활용 — 아래 8장 |
 
 ---
@@ -29,7 +29,7 @@
 | **V** Vicinity | 약속 구역 | 위치(Pleos FusedLocation) · 근접 알림(ENTER/EXIT)으로 한 번 더 확인 | “약속 구역 끝이 가까워요. 이 길로 가면 구역을 벗어나요.” |
 | **E** Expressway | 고속도로 대신 | 도로 제한속도(100 km/h 이상이면 고속도로로 봄) · 갈림길 방면(NaviHelper TBT — 3.0.5의 TBT에는 도로 이름이 없음) | 들어서기 전: “앞 갈림길은 판교IC 방면이에요. 약속대로 일반도로로 가요.” · 들어서면: “고속도로에 들어섰어요. 약속과 달라요. 다음 나들목에서 내려갈지 정해요.” |
 
-**말하는 순간을 고릅니다.** 회전 직전·직후, 방향지시등이 켜진 동안, 급제동 뒤 2초 동안은 말하지 않고(침묵 구간 — 신호 대기 중에도 같음, 1.3.0), 기본 내비 안내와 겹치면 약 0.2초 만에 물러섰다가 안내가 끝나고 1.5초 뒤 짧게 다시 말합니다. 문장 길이는 글자 수로 다시 재서(한국어 약 0.17초/자, 에뮬레이터 실측) 회전 전에 끝낼 수 있을 때만 시작합니다.
+**말하는 순간을 고릅니다.** 회전 직전·직후, 방향지시등이 켜진 동안, 급제동 뒤 2초 동안은 말하지 않고(침묵 구간 — 신호 대기 중에도 같음, 1.3.0), 기본 내비 안내와 겹치면 약 0.2초 만에 물러섰다가 안내가 끝나고 1.5초 뒤 짧게 다시 말합니다. 문장 길이는 글자 수로 다시 재서(한국어 약 0.17초/자, 에뮬레이터 실측) 회전 전에 끝낼 수 있을 때만 시작합니다. 이 판단 코어를 그대로 돌린 가상 주행 시뮬레이션(도로 3종 × 20분 300회)에서 ‘바로 말하기’보다 회전 접근·방향지시등·내비 안내·급제동과 겹친 말이 40.8% → 5.8%(도심 밀집)로 줄고, 말의 92~99%가 주행 중 전달됐습니다(가정 위의 비교 — [`docs/TIMING_EVAL.md`](docs/TIMING_EVAL.md)).
 
 **모르면 판단하지 않습니다(1.3.0).** 도로·와이퍼 신호를 한 번도 받지 못했거나 위치가 5분 넘게 끊기면 그 약속은 주행 끝에도 ‘지킴’이 아니라 ‘판단할 신호가 없었어요’로 따로 말합니다.
 
@@ -163,7 +163,7 @@ adb logcat -d -s DP | grep -E "stt_init|stt_listen|stt_result|voice_cmd"
 
 | 항목 | 값 |
 |---|---|
-| 에뮬레이터 | Pleos Connect 시스템 이미지 — Android 14 (API 34, user 빌드), 2560×1440, RAM 4 GB |
+| 에뮬레이터 | **Pleos Connect 에뮬레이터 v2.1.0** — 시스템 이미지 `release_connect_v2.1.0`(Android 14 · API 34 · user 빌드, `system-images;android-34;pleos_car_emulator;arm64-v8a`) · Android Emulator 37.2.13 · 하드웨어 프로필 ‘Pleos Connect v2.1.0’ · **화면 2560×1440** · RAM 4 GB |
 | 부팅 | **Cold Boot** 필수(Quick Boot면 차량 신호 VHAL이 붙지 않음) |
 | 앱 SDK | minSdk 33 · targetSdk/compileSdk 35 · Kotlin 2.0.0 · AGP 8.8.2 · Gradle 8.10.2 · JDK 17 |
 | Pleos SDK | Vehicle 2.3.2 · NaviHelper 3.0.5 · TextToSpeech 3.3.1 · SpeechToText 3.3.1 · FusedLocation 1.1.3 (Pleos Playground Maven, 토큰 불필요) |
@@ -189,8 +189,9 @@ adb logcat -d -s DP | grep -E "stt_init|stt_listen|stt_result|voice_cmd"
 | `core/` | 순수 Kotlin 판단 코어 — 약속 엔진(5종) · 일몰 계산(NOAA) · 출발 전 계획 · 발화 스케줄러(늦은 알림 규칙) · 내비에 물러서기 · 침묵 구간 게이트 · 주행 세션(상태 기계) · 화면 모드 결정 · 음성 명령 뜻 풀이(`voice/`) · 리플레이 재생기 · 기기 안 기록 · 약속 구역 이중 확인 규칙(`engine/ZoneCrossCheck`). 스펙 127개 |
 | `app/` | Pleos 차량용 앱 — `platform/`(Vehicle SDK · CarPropertyManager · CarUxRestrictions · NaviHelper · Pleos FusedLocation(+LocationManager 대체) · Pleos TextToSpeech · Pleos SpeechToText) · `DrivePromiseService`(10 Hz 판단 루프, 포그라운드) · `MainActivity`(정차 화면) · `DriveActivity`(주행 화면) · `store/`(기록·설정) · `replay/` |
 | `demo/trips/` | 시연 주행 4개(JSON) — 앱 assets이자 코어 스펙 S72의 입력 |
-| `docs/` | `MANUAL.md`(기동·재기동·운영) · `contracts.md`(설계 계약) · `VOICE_EVAL.md`(음성 명령 점검 기록) · `demo/`(시연 영상) |
+| `docs/` | `MANUAL.md`(기동·재기동·운영) · `contracts.md`(설계 계약) · `VOICE_EVAL.md`(음성 명령 점검 기록) · `TIMING_EVAL.md`(발화 타이밍 시뮬레이션) · `demo/`(시연 영상) |
 | `probes/g1b/` | 기술 확인용 프로브 앱(주행 중 화면 차단·음성·내비 겹침·차량 신호 — 따로 빌드) |
+| `tools/timing-sim/` | 발화 타이밍 시뮬레이션(판단 코어를 그대로 불러 정책 비교 — 빌드에 들어가지 않음, [`docs/TIMING_EVAL.md`](docs/TIMING_EVAL.md)) |
 | `apk/` | 제출용 release APK |
 
 **설계 원칙**
