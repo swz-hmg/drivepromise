@@ -7,11 +7,11 @@
 
 | 항목 | 내용 |
 |---|---|
-| 앱 이름 | 운전약속 (DrivePromise) · 패키지 `app.drivepromise` · 버전 1.3.5 (versionCode 12) |
+| 앱 이름 | 운전약속 (DrivePromise) · 패키지 `app.drivepromise` · 버전 1.3.6 (versionCode 13) |
 | 한 줄 소개 | D·R·I·V·E 다섯 약속(해 지기 전 귀가 · 비 오는 날 조심 · 2시간마다 쉬기 · 약속 구역 · 고속도로 대신 일반도로)을 차량 신호로 판단하고, 내비 안내·방향지시등 같은 ‘침묵 구간’을 피해 한두 문장으로 말합니다 |
 | APK | [`apk/DrivePromiseTeam_DrivePromise_release.apk`](apk/) (release 빌드, 전용 키 서명) · 체크섬 `apk/SHA256SUMS.txt` |
 | 테스트 환경 | Pleos Connect 에뮬레이터 **v2.1.0**(Android 14 · API 34, 화면 2560×1440) — 아래 3장 |
-| 시연 영상 | [`docs/demo/drivepromise_demo.mp4`](docs/demo/) (약 3분 45초 · 1.3.0 에뮬레이터 실제 녹화 — 1.3.1~1.3.5도 영상 속 장면의 문장·순서가 같음 · 1.3.5의 정차 화면에는 D·R·I·V·E 줄이 하나 더 있음(1.3.2부터 약속 구역 ‘밖’·‘돌아옴’이 위치 확인 때문에 약 1초 늦음): 출발 전 계획 · 시연 주행 4개 · 질문과 대답 · 음성 명령) |
+| 시연 영상 | [`docs/demo/drivepromise_demo.mp4`](docs/demo/) (약 3분 45초 · 1.3.0 에뮬레이터 실제 녹화 — 1.3.1~1.3.6도 영상 속 장면의 문장·순서가 같음 · 1.3.5부터 정차 화면에는 D·R·I·V·E 줄이 하나 더 있음(1.3.2부터 약속 구역 ‘밖’·‘돌아옴’이 위치 확인 때문에 약 1초 늦음): 출발 전 계획 · 시연 주행 4개 · 질문과 대답 · 음성 명령) |
 | 문서 | 운영 매뉴얼 [`docs/MANUAL.md`](docs/MANUAL.md) · 설계 계약 [`docs/contracts.md`](docs/contracts.md) · 음성 명령 점검 기록 [`docs/VOICE_EVAL.md`](docs/VOICE_EVAL.md) · 발화 타이밍 시뮬레이션 [`docs/TIMING_EVAL.md`](docs/TIMING_EVAL.md) |
 | 개발 방식 | 생성형 AI 도구 활용 — 아래 8장 |
 
@@ -29,7 +29,7 @@
 | **V** Vicinity | 약속 구역 | 위치(Pleos FusedLocation) · 근접 알림(ENTER/EXIT)으로 한 번 더 확인 | “약속 구역 끝이 가까워요. 이 길로 가면 구역을 벗어나요.” |
 | **E** Expressway | 고속도로 대신 | 도로 제한속도(100 km/h 이상이면 고속도로로 봄) · 갈림길 방면(NaviHelper TBT — 3.0.5의 TBT에는 도로 이름이 없음) | 들어서기 전: “앞 갈림길은 판교IC 방면이에요. 약속대로 일반도로로 가요.” · 들어서면: “고속도로에 들어섰어요. 약속과 달라요. 다음 나들목에서 내려갈지 정해요.” |
 
-**말하는 순간을 고릅니다.** 회전 직전·직후, 방향지시등이 켜진 동안, 급제동 뒤 2초 동안은 말하지 않고(침묵 구간 — 신호 대기 중에도 같음, 1.3.0), 기본 내비 안내와 겹치면 약 0.2초 만에 물러섰다가 안내가 끝나고 1.5초 뒤 짧게 다시 말합니다. 문장 길이는 글자 수로 다시 재서(한국어 약 0.17초/자, 에뮬레이터 실측) 회전 전에 끝낼 수 있을 때만 시작합니다. 이 판단 코어를 그대로 돌린 가상 주행 시뮬레이션(도로 3종 × 20분 300회)에서 ‘바로 말하기’보다 회전 접근·방향지시등·내비 안내·급제동과 겹친 말이 40.8% → 5.8%(도심 밀집)로 줄고, 말의 92~99%가 주행 중 전달됐습니다(가정 위의 비교 — [`docs/TIMING_EVAL.md`](docs/TIMING_EVAL.md)).
+**말하는 순간을 고릅니다.** 회전 직전·직후(회전 8초 전, 좌회전·유턴은 10초 전부터 회전점을 지나고 8초 뒤까지 — 1.3.6에서 회전 뒤 8초를 회전점 기준으로 바로잡음), 방향지시등이 켜진 동안, 급제동 뒤 2초 동안은 말하지 않고(침묵 구간 — 신호 대기 중에도 같음, 1.3.0), 기본 내비 안내와 겹치면 약 0.2초 만에 물러섰다가 안내가 끝나고 1.5초 뒤 짧게 다시 말합니다. 문장 길이는 글자 수로 다시 재서(한국어 약 0.17초/자, 에뮬레이터 실측) 회전 전에 끝낼 수 있을 때만 시작합니다. 이 판단 코어를 그대로 돌린 가상 주행 시뮬레이션(도로 3종 × 20분 300회)에서 ‘바로 말하기’보다 회전 접근·방향지시등·내비 안내·급제동과 겹친 말이 40.8% → 5.8%(도심 밀집)로 줄고, 말의 92~99%가 주행 중 전달됐습니다(가정 위의 비교 — [`docs/TIMING_EVAL.md`](docs/TIMING_EVAL.md)).
 
 **모르면 판단하지 않습니다(1.3.0).** 도로·와이퍼 신호를 한 번도 받지 못했거나 위치가 5분 넘게 끊기면 그 약속은 주행 끝에도 ‘지킴’이 아니라 ‘판단할 신호가 없었어요’로 따로 말합니다.
 
@@ -153,7 +153,7 @@ adb logcat -d -s DP | grep -E "stt_init|stt_listen|stt_result|voice_cmd"
 
 | 하는 일 | 명령 |
 |---|---|
-| 판단 코어 스펙 127개(JDK 17 — 처음 한 번 Gradle·의존성 내려받기에 인터넷 필요) | `./gradlew :core:test` |
+| 판단 코어 스펙 128개(JDK 17 — 처음 한 번 Gradle·의존성 내려받기에 인터넷 필요) | `./gradlew :core:test` |
 | 디버그 APK | `./gradlew :app:assembleDebug` |
 | release APK(`~/.drivepromise/signing.properties`가 있으면 그 키로 서명) | `./gradlew :app:assembleRelease` |
 
@@ -172,7 +172,7 @@ adb logcat -d -s DP | grep -E "stt_init|stt_listen|stt_result|voice_cmd"
 | 소리 | 에뮬레이터 오디오 출력 켜기(Mac 스피커). 앱은 내비 안내 용도(NAVIGATION_GUIDANCE)로 말함 |
 | 네트워크 | 약속 판단·일몰 계산·음성 합성·음성 인식(둘 다 ON_DEVICE)은 오프라인 동작. 출발 전 계획·ETA는 내비 경로(NaviHelper)를 씀 — 경로가 없으면 해당 판단만 ‘판단 못 함’ |
 | 주행 중 화면 | 주행 화면은 `distractionOptimized=true`로 선언되어 있고, Pleos 마켓 심사로 DO가 인정된다는 **가정**(설정 ‘DO 인정 가정: 켬’)으로 띄웁니다. 사이드로드 설치에서 플랫폼이 가리면 앱이 감지해 음성만으로 내려갑니다 |
-| 시험한 범위 | 에뮬레이터 리플레이 4종(발화 열·요약·물러서기·주행 화면) · 코어 스펙 127개 · Virtual Console 신호(기어·속도·방향지시등) · 위치: geo fix로 약속 구역 경계 넘기(Pleos 좌표 수신·코어 판정·근접 알림 — 2-3) · 음성 명령: 뜻 풀이·질문·조용히·듣는 동안 말 보류·질문일 때만 듣기·리플레이 멈춤(스펙 S77~S82)과 에뮬레이터 시험(2-4) |
+| 시험한 범위 | 에뮬레이터 리플레이 4종(발화 열·요약·물러서기·주행 화면) · 코어 스펙 128개 · Virtual Console 신호(기어·속도·방향지시등) · 위치: geo fix로 약속 구역 경계 넘기(Pleos 좌표 수신·코어 판정·근접 알림 — 2-3) · 음성 명령: 뜻 풀이·질문·조용히·듣는 동안 말 보류·질문일 때만 듣기·리플레이 멈춤(스펙 S77~S82)과 에뮬레이터 시험(2-4) |
 
 **알려진 제한(1차 제출 기준)** — 실차 시험 전입니다. 기본 약속은 5개(쉬기 2시간 · 해 지기 30분 전 · 약속 구역 서울시청 반경 10 km)이고 정차 화면 ‘약속 정하기’에서 바꿉니다. 출발 전 계획은 내비가 주는 추천 경로 1개의 도착 시각으로 일몰 여유를 판단하며(목적지는 시연용 판교역 버튼), 에뮬레이터 경로에는 도로 종류가 없어 계획 카드에 ‘고속도로가 있는지는 알 수 없어요’를 보여 줍니다(계획은 앞 두 문장만 말함). 시동 자동 시작은 설치 뒤 한 번 앱을 연 다음부터 동작합니다. 에뮬레이터 VHAL에는 기어·속도만 있어 방향지시등·와이퍼·전조등은 Pleos Vehicle SDK로 받습니다. 위치는 Pleos FusedLocation SDK 1.1.3(위치 업데이트 + 약속 구역 근접 알림)을 쓰고, 지원하지 않거나 권한이 없거나 15초 동안 좌표가 없으면 Android LocationManager로 자동 전환합니다. 음성 명령은 Pleos SpeechToText 3.3.1(ON_DEVICE)로 다섯 가지 말만 알아듣는 닫힌 문법이며, 음성 인식을 쓸 수 없으면 버튼과 질문 없는 문장으로 동작합니다. 음성 명령의 정확도는 합성음(기계 목소리)을 인식기에 넣는 시험까지만 했고, 시니어 실제 목소리로는 아직 재지 않았습니다(1차 제출 뒤 미리 정해 둔 절차로 측정 · 합성음 시험의 숫자와 한계는 [`docs/VOICE_EVAL.md`](docs/VOICE_EVAL.md)) — 그래서 음성 명령은 보조 수단으로 두었습니다: 앱의 안내는 대답이 없어도 그대로 이어지고, ‘다시 들려줘’는 큰 버튼으로, 약속 상태는 화면 타일로도 볼 수 있으며, 모르는 말에는 아무것도 하지 않고 다시 묻습니다. 마이크 권한(RECORD_AUDIO)이 꼭 필요한지는 실차·마켓 심사 전에 확인해 필요 없으면 뺍니다. 운전자 화면 문장 길이는 플랫폼 허용 길이(기본 120자) 안으로 자릅니다.
 
@@ -186,7 +186,7 @@ adb logcat -d -s DP | grep -E "stt_init|stt_listen|stt_result|voice_cmd"
 
 | 경로 | 내용 |
 |---|---|
-| `core/` | 순수 Kotlin 판단 코어 — 약속 엔진(5종) · 일몰 계산(NOAA) · 출발 전 계획 · 발화 스케줄러(늦은 알림 규칙) · 내비에 물러서기 · 침묵 구간 게이트 · 주행 세션(상태 기계) · 화면 모드 결정 · 음성 명령 뜻 풀이(`voice/`) · 리플레이 재생기 · 기기 안 기록 · 약속 구역 이중 확인 규칙(`engine/ZoneCrossCheck`). 스펙 127개 |
+| `core/` | 순수 Kotlin 판단 코어 — 약속 엔진(5종) · 일몰 계산(NOAA) · 출발 전 계획 · 발화 스케줄러(늦은 알림 규칙) · 내비에 물러서기 · 침묵 구간 게이트 · 주행 세션(상태 기계) · 화면 모드 결정 · 음성 명령 뜻 풀이(`voice/`) · 리플레이 재생기 · 기기 안 기록 · 약속 구역 이중 확인 규칙(`engine/ZoneCrossCheck`). 스펙 128개 |
 | `app/` | Pleos 차량용 앱 — `platform/`(Vehicle SDK · CarPropertyManager · CarUxRestrictions · NaviHelper · Pleos FusedLocation(+LocationManager 대체) · Pleos TextToSpeech · Pleos SpeechToText) · `DrivePromiseService`(10 Hz 판단 루프, 포그라운드) · `MainActivity`(정차 화면) · `DriveActivity`(주행 화면) · `store/`(기록·설정) · `replay/` |
 | `demo/trips/` | 시연 주행 4개(JSON) — 앱 assets이자 코어 스펙 S72의 입력 |
 | `docs/` | `MANUAL.md`(기동·재기동·운영) · `contracts.md`(설계 계약) · `VOICE_EVAL.md`(음성 명령 점검 기록) · `TIMING_EVAL.md`(발화 타이밍 시뮬레이션) · `demo/`(시연 영상) |
@@ -209,7 +209,7 @@ adb logcat -d -s DP | grep -E "stt_init|stt_listen|stt_result|voice_cmd"
 ./gradlew :core:test
 ```
 
-결과는 `core/build/test-results/test/*.xml`(S01~S127, 127개 — 1.3.0 검토 반영 S84~S100 · 1.3.1 종합 점검 P0 S101~S106 · 1.3.2 P1 S107~S114 · 1.3.3·1.3.4 P2 S115~S124 · 1.3.4 음성 문법 후보 대조 S125~S126 · 1.3.5 코어↔앱 이음매(약속 구역 이중 확인) S127 포함)에 남습니다.
+결과는 `core/build/test-results/test/*.xml`(S01~S128, 128개 — 1.3.0 검토 반영 S84~S100 · 1.3.1 종합 점검 P0 S101~S106 · 1.3.2 P1 S107~S114 · 1.3.3·1.3.4 P2 S115~S124 · 1.3.4 음성 문법 후보 대조 S125~S126 · 1.3.5 코어↔앱 이음매(약속 구역 이중 확인) S127 · 1.3.6 회전 뒤 침묵 기준점 S128 포함)에 남습니다.
 
 에뮬레이터 스모크(설치 → 위치 시험 → 음성 명령 시험 → 리플레이 4개 → 발화 열·요약·주행 화면·질문 뒤 듣기 판정)는 개발 PC의 실행 스크립트로 돌립니다(저장소 밖).
 
@@ -224,7 +224,7 @@ adb logcat -d -s DP | grep -E "stt_init|stt_listen|stt_result|voice_cmd"
 ## 8. 개발 방식 — 생성형 AI 활용 고지
 
 - 문제 정의, 약속 규칙과 설계 판단, 시험 기준, 에뮬레이터 실행 검증은 참가자가 직접 했습니다.
-- 코드·문서·시연 영상 제작에는 생성형 AI 도구(Anthropic Claude)를 활용했습니다. AI가 만든 결과물은 참가자가 모두 검토하고, 자동 시험(127개)과 Pleos Connect 에뮬레이터 실행으로 확인했습니다.
+- 코드·문서·시연 영상 제작에는 생성형 AI 도구(Anthropic Claude)를 활용했습니다. AI가 만든 결과물은 참가자가 모두 검토하고, 자동 시험(128개)과 Pleos Connect 에뮬레이터 실행으로 확인했습니다.
 - 일부 영상·그림 파일에는 이 도구가 붙인 출처 정보(C2PA 콘텐츠 자격 증명)가 들어 있습니다. 개인 정보는 들어 있지 않습니다.
 
 *Built with AI assistance: the participant defined the problem, the promise rules, the design decisions and test criteria, and verified everything on the emulator; code, documents and the demo video were produced with a generative AI tool (Anthropic Claude) and reviewed by the participant. Some media files carry C2PA provenance metadata.*

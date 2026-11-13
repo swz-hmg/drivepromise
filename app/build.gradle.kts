@@ -32,8 +32,8 @@ android {
         applicationId = "app.drivepromise"
         minSdk = 33
         targetSdk = 35
-        versionCode = 12
-        versionName = "1.3.5"   // 공모전 1차 제출본(11/14) — 1.3.4 + 11/10 전체 점검 반영(위치 권한 COARSE 함께 요청 · 낮/밤 재생성은 차단 아님 · 명령 기록에 목적지는 길이만 · 구역 이중 확인 비교 시점을 코어 값에서 계산 · TTS 초기화 실패 다시 시도 — 진행 중인 연결은 60초까지 기다림)
+        versionCode = 13
+        versionName = "1.3.6"   // 공모전 1차 제출본(11/15) — 1.3.5 + 회전 뒤 침묵을 회전점 기준으로(QuietGate.turnReachedM 20 → 0 · 목적지 판정 destinationClearM 20 그대로 · S128 — 11/13 구현 코어 시뮬레이션 docs/TIMING_EVAL.md)
     }
 
     signingConfigs {

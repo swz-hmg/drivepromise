@@ -19,8 +19,11 @@ data class GatePolicy(
     val postMs: Long = 8_000,
     /** 남은 시간 = 거리 ÷ max(속도, 이 값) — 정지·저속에서도 회전이 ‘곧’이라고 보지 않게 */
     val minSpeedMps: Double = 5.0,
-    /** TBT 거리가 이 값 이하가 되면 회전점을 지난 것으로 봄 */
-    val turnReachedM: Int = 20,
+    /** TBT 거리가 이 값 이하가 되면 회전점을 지난 것으로 봄 — 1.3.6: 20 → 0(회전점 기준). 20 m 앞을 ‘통과’로 보면 회전 뒤 8초가
+     *  회전점보다 앞에서 시작돼, 회전 속도(약 15 km/h)에서는 회전 뒤 약 4~5초에 말이 나왔음(11/13 구현 코어 시뮬레이션 — docs/TIMING_EVAL.md, S128) */
+    val turnReachedM: Int = 0,
+    /** 목적지 TBT가 이 거리 안이면 회전 예측을 접음(1.3.5까지 turnReachedM과 같던 값 — 그대로 둠) */
+    val destinationClearM: Int = 20,
     /** 새 TBT의 거리가 직전 추정보다 이만큼 이상 크면 ‘다음 회전으로 넘어감’(= 회전 통과) */
     val tbtAdvanceM: Int = 60,
     /** 순정 내비가 안내를 시작하는 거리(가정 — G1-B에서 측정해 교체) */
@@ -139,7 +142,7 @@ class QuietGate(private val p: GatePolicy = GatePolicy()) : QuietWindows {
         movedM = 0.0   // 1.3.3(B17): 새 TBT 거리부터 다시 적분
         tbtTurn = e.turn
         turnCounted = false
-        if (e.turn == TurnType.DESTINATION && e.distM <= p.turnReachedM) tbtAt = null
+        if (e.turn == TurnType.DESTINATION && e.distM <= p.destinationClearM) tbtAt = null
     }
 
     private fun markTurnPassed(at: Long) {

@@ -222,7 +222,7 @@ watchdog(realNow): 말하는 중 ∧ realNow − startedReal > max(15 s, need ×
 
 ## 8. 시험 (`./gradlew :core:test`)
 
-스펙 127개(S01~S41 `Specs.kt`, S42~S56·S76 `EngineSpecs.kt`, S57~S75·S77~S83 `SessionSpecs.kt`, S84~S100 `ReviewSpecs.kt` — 1.3.0 외부 검토 반영 + 11/8 실행에서 발견한 S98~S100, S101~S106 `FixSpecs.kt` — 1.3.1 종합 점검 P0, S107~S114 `P1Specs.kt` — 1.3.2 종합 점검 P1, S115~S124 `P2Specs.kt` — 1.3.3·1.3.4 종합 점검 P2, S125~S126 `C18Specs.kt` — 1.3.4 G2 문법 후보가 사전 등록 채점 도구 `rescore.py`와 같은지, S127 `SeamSpecs.kt` — 1.3.5 코어↔앱 이음매: 약속 구역 이중 확인 비교 시점) — 같은 목록을 JUnit 5(`CoreSpecsTest`, 동적 시험)와 의존성 없는 점검 러너가 돌립니다. S72는 `demo/trips/*.json`(시연 트립 4개, 앱 assets와 같은 파일)을 읽습니다.
+스펙 128개(S01~S41 `Specs.kt`, S42~S56·S76 `EngineSpecs.kt`, S57~S75·S77~S83 `SessionSpecs.kt`, S84~S100 `ReviewSpecs.kt` — 1.3.0 외부 검토 반영 + 11/8 실행에서 발견한 S98~S100, S101~S106 `FixSpecs.kt` — 1.3.1 종합 점검 P0, S107~S114 `P1Specs.kt` — 1.3.2 종합 점검 P1, S115~S124 `P2Specs.kt` — 1.3.3·1.3.4 종합 점검 P2, S125~S126 `C18Specs.kt` — 1.3.4 G2 문법 후보가 사전 등록 채점 도구 `rescore.py`와 같은지, S127 `SeamSpecs.kt` — 1.3.5 코어↔앱 이음매: 약속 구역 이중 확인 비교 시점, S128 `TimingSpecs.kt` — 1.3.6 회전 뒤 침묵은 회전점 기준) — 같은 목록을 JUnit 5(`CoreSpecsTest`, 동적 시험)와 의존성 없는 점검 러너가 돌립니다. S72는 `demo/trips/*.json`(시연 트립 4개, 앱 assets와 같은 파일)을 읽습니다.
 
 | 묶음 | 스펙 |
 |---|---|
@@ -250,6 +250,7 @@ watchdog(realNow): 말하는 중 ∧ realNow − startedReal > max(15 s, need ×
 | 1.3.3·1.3.4 종합 점검 P2(쉬기 예고 남은 분 · 시계 점프 · 회전 거리 · 목적지 정차 · 도착 뒤 주행 · 시간대 · 빗길 기준 속도 · 지난 ETA · 속도 모름) | S115~S124 |
 | G2 문법 후보 대조(기본 V130 · C18A·C18B = rescore.py, 163줄) | S125~S126 |
 | 코어↔앱 이음매: 약속 구역 이중 확인 — 비교 시점 = 확인 시간 + 3초면 두 방향 일치, 옛 3초는 불일치(1.3.5) | S127 |
+| 회전 뒤 침묵은 회전점 기준 — 감속해 4.2 m/s로 도는 회전에서 실제 회전 뒤 약 8초에 말함(1.3.5 기준이면 5.1초)(1.3.6) | S128 |
 
 ## 8.5 약속 엔진 (`engine` · `plan` · `scene`, 11/6 작업)
 
@@ -298,7 +299,7 @@ object LedgerJson { fun encode(LedgerEvent): String; fun decode(line): LedgerEve
 |---|---|---|
 | preMs · preLeftMs · postMs | 8 000 · 10 000 · 8 000 | 침묵구간검증 v0.1 선택값 P5(문헌 범위 + 시뮬레이션 강건성) |
 | minSpeedMps | 5.0 | 남은 시간 = 거리 ÷ max(속도, 5 m/s) — 정지·저속에서 회전이 ‘곧’이라고 보지 않게 · 기어 P(세워 둠)에서는 회전 예측 자체를 하지 않음(1.3.0, 11/8 실행) |
-| turnReachedM · tbtAdvanceM | 20 · 60 | 회전 통과 판단: TBT 거리 ≤ 20 m 또는 새 TBT가 추정보다 60 m 이상 멀어짐 |
+| turnReachedM · destinationClearM · tbtAdvanceM | 0 · 20 · 60 | 회전 통과 판단: TBT 거리(속도 적분)가 회전점에 닿음 또는 새 TBT가 추정보다 60 m 이상 멀어짐 · 목적지 TBT가 20 m 안이면 회전 예측을 접음. 1.3.6: 1.3.5까지 20 m 앞을 ‘통과’로 봐 회전 뒤 8초가 회전점보다 앞에서 시작됐음(15 km/h 회전에서 회전 뒤 약 4~5초에 말함 — 구현 코어 시뮬레이션 `docs/TIMING_EVAL.md`, S128) |
 | navPromptAtM · navPromptMs · navGuardPadMs | [300, 100] · 2 500 · 500 | 순정 내비 안내 지점·길이(가정 — G1-B에서 측정해 교체) |
 | stopWindowMs | 2 000 | 신호 대기 시작 2초(스케줄러가 마감 임박·두 번 끊긴 말에만 씀) |
 | hardBrakeMps2 · hardBrakeHoldMs | 3.0 · 2 000 | 급제동(0.3~1.5초 전 표본과 비교) 뒤 침묵 |
@@ -391,6 +392,7 @@ class SpeechScheduler { var muteInfoUntilMs: Long }   // ‘조용히’ — INF
 | 11/9 종합 점검 P2(Q063) · 앱 1.3.3(versionCode 10) | 1.3.2 동작 | **쉬기 예고의 남은 분은 말하는 순간 값(반올림) · 벽시계 점프는 앱이 단조 시계(elapsedRealtime)와 비교해 5초 넘게 어긋나면 `onClockJump`로 알림 → 그 사이는 운전·정차 시간에 넣지 않고 정차·도착·출발 시각을 옮김 · 침묵 구간·내비 간격은 ‘미래’ 기록을 버림(시계 뒤 점프) · 회전까지 남은 거리는 TBT 뒤 달린 거리를 적분(신호 대기 뒤 출발) · 오래 세워 둬서 끝나면 그 마지막 정차의 쉼은 이번 주행 판정에서 뺌 · 도착 소식 5분 뒤에도 움직이면 도착을 지우고 주행을 이어 감 · 시간대와 맞지 않는 좌표로는 해 지기 전 판단 안 함 · 헤드리스 시스템 사용자(0)에서는 부팅 때 시작 안 함** | 11/9 프로브 B10·B11·B17·B21·B22·B23·B24 — S115~S121 · B05·B06은 NaviHelper 3.0.5 TBTInfo(type·distance·description)에 도로 이름이 없어 실제 앱에서는 생기지 않음 · B18 음성 문법은 G2 사전 등록 규칙으로 |
 | 11/9 종합 점검 P2 나머지(Q066) · 앱 1.3.4(versionCode 11) | 1.3.3 동작 | **빗길 과속 문장의 기준 속도는 말하는 순간의 제한속도로 다시 계산(밀린 사이 도로가 바뀌면 옛 기준을 말하던 것 · 이제 과속이 아니면 말하지 않음) · 도착 예정 시각이 2분(`staleEtaGraceMs`) 넘게 지났는데 도착 소식이 없으면 ETA를 모름으로(‘지금 도착’으로 보아 해 지기 전·쉬기 ‘곧 도착’이 틀리던 것) · 속도를 모르면 ‘섰다’로 보지 않음(`VehicleSnapshot.stopped` — 신호 대기 창이 늘 열리던 것) · 비 오는 동안 속도를 모르면 빗길 판정 UNKNOWN, 주행 끝도 UNKNOWN(속도 없음을 0으로 보고 ‘지킴’이던 것) · 구역 경계·도착 지우기는 `movingKnown`으로 1.3.3과 같은 값 · G2 문법 후보 C18A·C18B를 `VoiceGrammar`로 이식(기본 V130, `VoiceCommands.kt`는 바이트까지 그대로)** | 11/9 종합 점검 P2(지난 ETA·속도 없음·비 문장의 옛 기준) — S122~S124 · G2 사전 등록(Q065) — S125~S126 |
 | 11/10 전체 점검(Q072·Q073) · 앱 1.3.5(versionCode 12) | 1.3.4 동작 | **코어: `engine.ZoneCrossCheck`(이중 확인 비교 시점 = zoneConfirmMs + 3초, 일치 규칙) + S127 · 앱: 위치 권한 요청에 COARSE를 함께(Android 12+는 FINE만 요청하면 무시) · 주행 화면이 구성 변경(낮/밤)으로 다시 만들어지면 차단으로 보지 않음 · adb `plan` 명령 기록은 목적지 글자 수만 · 근접 알림 비교 8초 뒤(`ZoneCrossCheck.delayMs`) · TTS 초기화가 실패면 30초 재시도 묶음에서 다시(소식 없이 10초를 넘긴 초기화는 시작 60초 뒤부터 — 진행 중인 연결을 끊지 않게), 해제된 옛 인스턴스의 늦은 소식은 무시** | 1.3.2에서 구역 확인(2번·5초)이 생긴 뒤에도 앱 비교는 3초 그대로라 두 방향 모두 불일치가 나오는 구조였음(결합 결함). 나머지는 마켓 설치·실차에서 드러날 앱 층 결함 — 판단 로직은 그대로 |
+| 11/13 제출 전 최종 점검(Q083·Q084) · 앱 1.3.6(versionCode 13) | 1.3.5 동작 | **코어: 회전 통과 판단을 회전점 기준으로(`GatePolicy.turnReachedM` 20 → 0, 목적지 판정은 `destinationClearM` 20 그대로) + S61 기대값 + S128 → 128개 · 문서: README 에뮬레이터 버전(v2.1.0) · `docs/TIMING_EVAL.md` · `tools/timing-sim/`** | 제출 코어를 그대로 돌린 발화 타이밍 시뮬레이션에서 1.3.5의 회전 뒤 침묵이 회전점 20 m 앞부터 세어져 회전 뒤 약 4~5초에 끝남을 확인(설계 8초). 수정의 대가: 도심 밀집 중앙 지연 +2.4초 · 만료 +1.4%p, 시연 트립 말 순서·시각은 같음 |
 
 ## 10. 다음(이 계약 위에)
 
