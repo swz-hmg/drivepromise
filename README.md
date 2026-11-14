@@ -220,13 +220,6 @@ adb logcat -d -s DP | grep -E "stt_init|stt_listen|stt_result|voice_cmd"
 - 마이크는 버튼을 누를 때와 쉬기 질문 직후 5초만 열립니다. 마이크로 들은 말의 원문은 어디에도 기록하지 않고 뜻(예: `STATUS`)만 기기 안 기록에 남깁니다(시험용 글자·음성 주입 명령의 글자만 개발 로그에 남음). ‘질문 뒤 듣기’는 정차 화면에서 끌 수 있습니다.
 - 판단이 틀릴 수 있는 상황(신호 없음·경로 없음)에서는 침묵합니다. 이 앱은 운전 보조 안내이며 운전자의 판단을 대신하지 않습니다.
 
-## 8. 개발 방식
-
-- 기획(문제 정의·약속 규칙), 설계 판단, 시험 기준, Pleos Connect 에뮬레이터 실행 검증은 참가자가 직접 했습니다.
-- 생성형 AI 도구는 코드 작성과 문서·시연 영상 제작을 돕는 보조 도구로 사용했습니다. 결과물은 참가자가 모두 검토하고 자동 시험(128개)과 에뮬레이터 실행으로 확인했습니다.
-
-*Development: the participant did the planning (problem and promise rules), the design decisions, the test criteria and the verification on the Pleos Connect emulator. A generative AI tool was used as an assistant for writing code, documents and the demo video; all output was reviewed by the participant and checked with the automated tests (128) and emulator runs.*
-
 ---
 
 공모전 출품작입니다. 저작권과 권리는 출품자에게 있습니다.
