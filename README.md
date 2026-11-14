@@ -11,7 +11,7 @@
 | 한 줄 소개 | D·R·I·V·E 다섯 약속(해 지기 전 귀가 · 비 오는 날 조심 · 2시간마다 쉬기 · 약속 구역 · 고속도로 대신 일반도로)을 차량 신호로 판단하고, 내비 안내·방향지시등 같은 ‘침묵 구간’을 피해 한두 문장으로 말합니다 |
 | APK | [`apk/DrivePromiseTeam_DrivePromise_release.apk`](apk/) (release 빌드, 전용 키 서명) · 체크섬 `apk/SHA256SUMS.txt` |
 | 테스트 환경 | Pleos Connect 에뮬레이터 **v2.1.0**(Android 14 · API 34, 화면 2560×1440) — 아래 3장 |
-| 시연 영상 | [`docs/demo/drivepromise_demo.mp4`](docs/demo/) (약 3분 45초 · 1.3.0 에뮬레이터 실제 녹화 — 1.3.1\~1.3.6도 영상 속 장면의 문장·순서가 같음 · 1.3.5부터 정차 화면에는 D·R·I·V·E 줄이 하나 더 있음(1.3.2부터 약속 구역 ‘밖’·‘돌아옴’이 위치 확인 때문에 약 1초 늦음): 출발 전 계획 · 시연 주행 4개 · 질문과 대답 · 음성 명령) |
+| 시연 영상 | [`docs/demo/drivepromise_demo.mp4`](docs/demo/) (약 3분 34초 · 1920×1080 · release APK 1.3.6을 에뮬레이터 v2.1.0에서 11/13 실제 녹화 · 한국어 자막: 정차 화면 · 출발 전 계획 · 시연 주행 4개 · 위치 이중 확인 · 질문과 대답 · 음성 명령) |
 | 문서 | 운영 매뉴얼 [`docs/MANUAL.md`](docs/MANUAL.md) · 설계 계약 [`docs/contracts.md`](docs/contracts.md) · 음성 명령 점검 기록 [`docs/VOICE_EVAL.md`](docs/VOICE_EVAL.md) · 발화 타이밍 시뮬레이션 [`docs/TIMING_EVAL.md`](docs/TIMING_EVAL.md) |
 
 ---
